@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ===== OPTIMIZER CONFIGURATION =====
-TARGET="metronome-4" # Any craftable material ID, e.g. ankh-4
+TARGET="ankh-4" # Any craftable material ID, e.g. ankh-4, metronome-4
 DAYS=30
 FUEL=500
 PARALLEL=3
@@ -16,7 +16,7 @@ SLEEP_WINDOWS=("00:00-11:00")
 NO_LAUNCH_WINDOWS=()
 INVENTORY_FILE="data/inventory.csv" # Empty string disables inventory
 OUTPUT_DIR="results" # Base directory; selected target is appended
-SOLVER_SECONDS=120
+SOLVER_SECONDS=200
 POLISH_SECONDS=60 # Additional budget for fuel and schedule quality
 VERBOSE_SOLVER=false # Enable HiGHS progress output
 OPEN_DASHBOARD=true # Set true to open on macOS after success
