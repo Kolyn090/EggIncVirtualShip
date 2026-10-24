@@ -1,10 +1,21 @@
 {
   "name": "eggincvirtualship-expectations",
   "private": true,
-  "engines": {"node": ">=20"},
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "generate:expectations": "node scripts/generate_ship_expectations.js",
-    "test": "node --test tests/expectations.test.js"
+    "test": "node --test tests/expectations.test.js tests/pwa.test.js",
+    "build:pwa": "python3 scripts/build_pwa_dashboard.py",
+    "test:pwa": "playwright test -c playwright.config.cjs"
   },
-  "dependencies": {"dayjs": "1.11.13", "esbuild": "0.25.12", "protobufjs": "7.5.4"}
+  "dependencies": {
+    "dayjs": "1.11.13",
+    "esbuild": "0.25.12",
+    "protobufjs": "7.5.4"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1"
+  }
 }

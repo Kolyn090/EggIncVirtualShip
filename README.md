@@ -37,6 +37,26 @@ Run the tests with:
 python -m unittest discover -s tests -v
 ```
 
+### Offline mission dashboard app
+
+The installable app in `pwa/` keeps exactly one active mission plan:
+
+```sh
+python3 -m http.server 8000 --bind 127.0.0.1 --directory pwa
+```
+
+Open <http://localhost:8000/>, wait for **Ready offline**, then import an
+optimizer-generated HTML plan from your device. Nothing is uploaded. The app
+restores the plan and automatically saved checklist when reopened offline.
+Plan import stays blocked until **Close Current Plan** is explicitly confirmed;
+closing deletes the active plan and its progress. Existing progress backup
+import/export remains available inside the dashboard.
+
+For installation on another device, serve `pwa/` over HTTPS and use the
+browser's Install/Add to Home Screen action. See [setup, storage behavior and
+tests](docs/OFFLINE_DASHBOARD.md). The optimizer and generated schedules are
+unchanged.
+
 ### wasmegg drop profiles and per-launch targeting
 
 The default expectation CSV is generated from wasmegg's observed loot profiles.

@@ -15,6 +15,9 @@ class RunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='optimizer space ') as directory:
             root=Path(directory)
             script=re.sub(r'^SLEEP_WINDOWS=.*$', 'SLEEP_WINDOWS=("23:00-08:00" "12:00-13:00")', (ROOT/'run_optimizer.sh').read_text(), flags=re.MULTILINE).replace('NO_LAUNCH_WINDOWS=()','NO_LAUNCH_WINDOWS=("2-3" "4-5")')
+            # This test uses a controlled fixture, independent of user-edited
+            # optimizer defaults (the real runner currently uses a 360 cap).
+            script=re.sub(r'^MAX_TOTAL_LAUNCHES=\d+', 'MAX_TOTAL_LAUNCHES=40', script, flags=re.MULTILINE)
             (root/'run_optimizer.sh').write_text(script)
             (root/'.venv/bin').mkdir(parents=True)
             fake=root/'.venv/bin/python'

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0a1222">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Egg, Inc. Mission Plan</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./app.css">
+  <script type="module" src="./app.mjs"></script>
+</head>
+<body>
+  <header class="app-header">
+    <span class="app-name">Mission Plan</span>
+    <span id="offlineStatus" class="muted" role="status">Preparing offline access…</span>
+    <div id="activeToolbar" hidden>
+      <span id="planName" class="plan-name"></span>
+      <span id="saveStatus" class="muted" role="status" aria-live="polite"></span>
+      <button id="retrySave" hidden>Retry save</button>
+      <button id="closeCurrent" class="close-button">Close Current Plan</button>
+    </div>
+  </header>
+  <div id="message" role="status" aria-live="polite"></div>
+  <main id="importScreen" hidden>
+    <section class="import-card">
+      <div class="eyebrow">Offline mission dashboard</div>
+      <h1>Import Plan</h1>
+      <p>Choose an optimizer-generated HTML plan from your device. Your plan stays on this device and is never uploaded.</p>
+      <p>One plan can be active at a time. Close the current plan before importing another.</p>
+      <button id="choosePlan" disabled>Choose HTML plan</button>
+      <input id="planFile" type="file" accept=".html,.htm,text/html" aria-label="Import HTML plan" hidden disabled>
+      <p class="muted">Checklist progress saves automatically. Progress backup import and export are available inside the dashboard.</p>
+    </section>
+  </main>
+  <button id="retryStorage" class="storage-retry">Reload local plan</button>
+  <iframe id="dashboard" title="Active mission dashboard" sandbox="allow-scripts allow-downloads" hidden></iframe>
+  <dialog id="closeDialog" aria-labelledby="closeTitle" aria-describedby="closeDescription">
+    <h2 id="closeTitle">Close current plan?</h2>
+    <p id="closeDescription">This will delete the current plan and all its checklist progress from local app storage on this device. Export a progress backup first if you want to keep one.</p>
+    <div class="dialog-actions">
+      <button id="keepPlan">Keep current plan</button>
+      <button id="confirmClose" class="close-button">Close and delete</button>
+    </div>
+  </dialog>
+</body>
+</html>

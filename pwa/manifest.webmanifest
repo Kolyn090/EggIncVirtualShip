@@ -1,0 +1,12 @@
+{
+  "id": "./",
+  "name": "Egg, Inc. Mission Plan",
+  "short_name": "Mission Plan",
+  "description": "One offline mission plan and its saved launch checklist.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0a1222",
+  "theme_color": "#0a1222",
+  "icons": [{"src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any"}]
+}

@@ -1,0 +1,136 @@
+# One active mission plan, offline
+
+The PWA lives in `pwa/`. It is a static app; it needs no API, user account,
+optimizer process, or plan-upload server. The optimizer, dashboard generator,
+and mission schedules are unchanged.
+
+## Open and install
+
+From the project root:
+
+```sh
+python3 -m http.server 8000 --bind 127.0.0.1 --directory pwa
+```
+
+Open <http://localhost:8000/> on that computer. Use the browser's **Install app**
+action if desired. For another device, serve the same `pwa/` directory on an
+HTTPS static host and use its install/Add to Home Screen action. Opening
+`index.html` directly with `file://` does not provide service-worker offline
+installation. Production usage does not need Node or Python; they are only
+build/development tools.
+
+Wait for **Ready offline** on the first visit. The installed app can then
+restart without the server or network. Plans remain private on the device:
+choosing an HTML file reads its embedded mission data locally, never uploads it,
+and does not execute its scripts or load its images/links.
+
+## Workflow
+
+1. With no active plan, **Import Plan** is the only plan-entry screen. Choose an
+   optimizer-generated `plan.html` or another named HTML dashboard export.
+2. The existing dashboard, launch cards, filters, balance tables, completion
+   marks and next-unfinished-mission scrolling open with that exact mission data.
+3. Checking or unchecking a mission saves automatically. **Saved on this device**
+   means the storage transaction committed. Reopening the app, including offline,
+   restores that plan and its checklist. A failed save is shown with a retry
+   action; it is not silently reported as saved.
+4. While active, the app hides/disables HTML-plan import. Reloading, another
+   window, a queued file-selection event, or a direct import attempt cannot
+   replace the active plan.
+5. Use **Close Current Plan** in the app header. The confirmation explains that
+   the plan and its entire checklist progress will be deleted from local app
+   storage. **Keep current plan** or Escape leaves them intact.
+6. Only **Close and delete** removes the active record and returns to Import
+   Plan. A new import starts with an empty checklist, even when importing the
+   same HTML again. There are no saved-plan lists, switching, or automatic
+   progress migration.
+
+The original HTML file and any downloaded JSON backups are external files;
+closing a plan does not delete those files. It deletes the app's active mission
+data and progress together. Keep the original HTML if you want to reimport it.
+
+## Progress backups
+
+The dashboard's existing **Export progress** and **Import progress** buttons
+remain available while a plan is active. They are checklist-backup operations,
+not plan imports. Existing `reggference-progress-v1` JSON files remain compatible
+with the same target and schedule. Another plan's backup is rejected; explicit
+backup import is the only way to restore a previous checklist after closing
+and reimporting a plan. No standalone dashboard's old browser progress is
+picked up automatically.
+
+The active record belongs to this browser profile/app origin. Normal browser
+restarts retain it. Clearing site data, private-session termination, or browser/
+OS storage eviction can remove local data; external progress backups and the
+original HTML remain the recovery mechanism. The browser test covers a full
+normal-browser shutdown/restart with network access disabled. Physical iOS
+installation has not been tested; the mobile layout is tested in Chromium.
+
+## Architecture
+
+- `store.mjs` keeps **one** IndexedDB key, `active`, containing mission data,
+  filename, unique active-session ID, progress and revision. There is no plan
+  collection or history. Import uses a serialized read/write transaction and
+  `add`, so simultaneous imports cannot overwrite each other. Closure deletes
+  that single record atomically. Late updates/deletions must match its ID and
+  cannot resurrect a closed plan or alter a later one.
+- `plan.mjs` reads the exported JSON directly from the HTML string without
+  putting imported markup into a DOM. It validates the data and calculates
+  the existing dashboard's exact progress-backup identity.
+- `dashboard-template.mjs` is the unchanged trusted dashboard template bundled
+  from `build_plan_dashboard.py`. Only this code runs in an opaque-origin
+  sandboxed frame. The small storage bridge directs checklist writes to the
+  parent record and validates their source, session token, plan ID and keys.
+  The frame has no network access or access to parent storage.
+- Progress writes apply per-mission changes in transactions, preserving updates
+  from other windows showing the same active plan. Broadcast notifications
+  synchronize views; notification storage contains no plan/progress. No progress
+  is ever migrated to another plan. A closed frame's browsing context is
+  discarded so iframe Back history cannot become a plan switcher.
+- The service worker caches only app assets. An asset update does not delete or
+  migrate the active record. All data is local; no imported files are requested
+  by or posted to a server.
+
+## Build and test
+
+The trusted template and service-worker asset version are committed, so a
+normal static deployment needs no build. After changing the existing dashboard
+or PWA assets, regenerate the template/cache version:
+
+```sh
+npm ci
+npm run build:pwa
+npm test
+npm run test:pwa
+.venv/bin/python -m unittest discover -s tests -v
+```
+
+Browser tests use `/usr/bin/chromium` when available, or the Playwright browser:
+
+```sh
+npx playwright install chromium
+# Optional system/browser override:
+PLAYWRIGHT_CHROMIUM_EXECUTABLE=/path/to/chromium npm run test:pwa
+```
+
+Seven browser tests cover local import, auto-saving check and uncheck, normal
+reload, a full persistent-profile browser restart while offline, offline close
+and reimport, blocked replacement, cancellation/confirmed deletion, stale
+writes, concurrent windows, explicit progress backups, untrusted HTML,
+mobile controls, storage-failure recovery and Chromium installability.
+Five Node tests cover parsing, malformed input, data preservation, backup-key
+compatibility and script escaping. A Python parity test ensures the offline
+bundle exactly matches the existing dashboard design and behavior.
+
+Verified commands for this implementation:
+
+- `npm run build:pwa`
+- `npm run test:pwa` — 7 real Chromium browser tests passed.
+- `npm test` — 14 Node tests passed, including the existing source-data tests.
+- `.venv/bin/python -m unittest discover -s tests -v` — 66 tests passed.
+
+A real 360-mission HTML export was also imported on a 390×844 viewport. Its
+stored mission data matched the source exactly; check/save/reload and timeline
+scrolling passed. The existing runner test now uses an explicit 40-launch test
+fixture rather than depending on the user's configurable 360-launch default.
+The actual runner configuration and optimizer sources were not changed.
