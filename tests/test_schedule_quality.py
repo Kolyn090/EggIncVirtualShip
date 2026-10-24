@@ -59,8 +59,10 @@ class QualityTests(unittest.TestCase):
         self.assertEqual(crafts['metronome-4'],2)
         self.assertGreater(result['schedule'].event_bonus.sum(),0)
         self.assertLessEqual(result['fuel_allocation'].allocated_T.sum(),20)
-        self.assertAlmostEqual(result['schedule'].start_hour.min(),0,places=4)
-        self.assertAlmostEqual(result['schedule'].end_hour.max(),3,places=4)
+        # Launch effort precedes completion: four boosted launches replace the
+        # previous mix of ordinary and boosted launches.
+        self.assertAlmostEqual(result['schedule'].start_hour.min(),2,places=4)
+        self.assertAlmostEqual(result['schedule'].end_hour.max(),4,places=4)
         validate_schedule(result['schedule'].to_dict('records'),2)
         stages=json.loads((result['out']/'plan_metadata.json').read_text())['optimization']['secondary_stages']
         self.assertIn('fuel allocation',[s['objective'] for s in stages])

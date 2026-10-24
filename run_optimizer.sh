@@ -8,6 +8,8 @@ FUEL=500
 PARALLEL=3
 # Maximum launches PER SHIP SLOT within any rolling 60-minute window; 0 is unlimited
 MAX_LAUNCHES_PER_HOUR=2
+MAX_TOTAL_LAUNCHES=40 # All slots combined; 0 is unlimited
+MAX_LAUNCHES_PER_DAY=0 # Per planning day across all slots; 0 is unlimited
 EVENTS=1
 EVENT_HOURS=48
 EVENT_MULTIPLIER=2
@@ -17,7 +19,7 @@ NO_LAUNCH_WINDOWS=()
 INVENTORY_FILE="data/inventory.csv" # Empty string disables inventory
 OUTPUT_DIR="results" # Base directory; selected target is appended
 SOLVER_SECONDS=200
-POLISH_SECONDS=60 # Additional budget for fuel and schedule quality
+POLISH_SECONDS=60 # Additional wall-clock budget for launch effort, fuel and schedule quality
 VERBOSE_SOLVER=false # Enable HiGHS progress output
 OPEN_DASHBOARD=true # Set true to open on macOS after success
 # ===== END CONFIGURATION =====
@@ -45,7 +47,7 @@ for ((i=0; i<${#OVERRIDES[@]}; i++)); do
 done
 ARGS=(--target "$TARGET" --days "$DAYS" --fuel "$FUEL" --parallel "$PARALLEL"
       --events "$EVENTS" --event-hours "$EVENT_HOURS" --event-multiplier "$EVENT_MULTIPLIER"
-      --max-launches-per-hour "$MAX_LAUNCHES_PER_HOUR" --fuel-step "$FUEL_STEP" --output-dir "$OUTPUT_DIR/$EFFECTIVE_TARGET"
+      --max-launches-per-hour "$MAX_LAUNCHES_PER_HOUR" --max-total-launches "$MAX_TOTAL_LAUNCHES" --max-launches-per-day "$MAX_LAUNCHES_PER_DAY" --fuel-step "$FUEL_STEP" --output-dir "$OUTPUT_DIR/$EFFECTIVE_TARGET"
       --solver-seconds "$SOLVER_SECONDS" --polish-seconds "$POLISH_SECONDS")
 if [[ -n "$INVENTORY_FILE" ]]; then ARGS+=(--inventory "$INVENTORY_FILE"); fi
 # Bash 3.2 with nounset requires the guarded expansion for empty arrays.

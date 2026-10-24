@@ -91,14 +91,14 @@ def prune_dominated_options(available,mission,drops,materials):
     useful=[option for option in available if (rates.loc[option]>0).any()]
     if not useful:return available[:1]
     retained=[]
-    for option in useful:
-        vector=rates.loc[option].to_numpy()
-        base=mission.loc[option,'base_ship']
-        dominated=False
-        for other in useful:
-            if option==other or mission.loc[other,'base_ship']!=base:continue
-            alternative=rates.loc[other].to_numpy()
-            if (alternative>=vector).all() and ((alternative>vector).any() or other<option):
-                dominated=True;break
-        if not dominated:retained.append(option)
-    return retained
+    # Compare small same-ship arrays instead of repeated pandas lookups inside
+    # the quadratic loop. This is the identical exact Pareto test.
+    bases={}
+    for option in useful:bases.setdefault(mission.loc[option,'base_ship'],[]).append(option)
+    for options in bases.values():
+        values=rates.loc[options].to_numpy();keys=np.asarray(options)
+        for i,option in enumerate(options):
+            dominates=np.all(values>=values[i],axis=1)&(np.any(values>values[i],axis=1)|(keys<option))
+            if not dominates.any():retained.append(option)
+    retained_set=set(retained)
+    return [option for option in useful if option in retained_set]

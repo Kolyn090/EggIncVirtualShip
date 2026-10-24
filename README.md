@@ -110,14 +110,12 @@ metadata default to the metronome target.
 
 No drop rates are fabricated for new recipe materials. Materials without known
 drops are reported in the console and metadata and can still come from inventory
-or crafting. Blank/non-numeric drop values are reported as unknown rather than
-measured zero. Supply verified rates in the existing expectations CSV format
+or crafting. Blank drop values retain explicit unknown status; nonnumeric values are rejected. Supply verified rates in the existing expectations CSV format
 (or select another CSV with `--expectations`) to make those sources available.
 A feasible time-limited solution is explicitly reported as uncertified.
 
-Currently, `titanium-bar-3` and `titanium-ore-3` have no ship drop rows.
-Their crafting chain is limited to owned inventory. Existing ankh and meteorite
-drop rows remain usable, so ankh plans can still be feasible.
+The legacy inventory names `titanium-bar-3` and `titanium-ore-3` map to source
+T2 bars and T1 ore. Their known drops are included in the generated profiles.
 
 ### Rolling launch limit
 
@@ -153,6 +151,28 @@ feasible solution or no solution; the optimizer reports either explicitly.
 No launches is normally feasible, even if no new target can be crafted.
 The existing one-second guard before event/sleep phase ends is retained.
 
+### Total and daily launch effort
+
+```sh
+./run_optimizer.sh --target ankh-4 --max-total-launches 40
+./run_optimizer.sh --max-total-launches 20 --max-launches-per-day 3
+./run_optimizer.sh --max-total-launches 0 --max-launches-per-day 0
+```
+
+The direct Python CLI defaults to unlimited (`0`) for both parameters. The
+runner defaults to `MAX_TOTAL_LAUNCHES=40` and `MAX_LAUNCHES_PER_DAY=0`; CLI
+values override these defaults. The daily limit counts all ship slots combined
+in each planning day `[24d, 24(d+1))` hours from the plan's origin. It is a daily
+bucket limit, separate from the per-slot rolling 60-minute limit. Exactly hour
+24 starts a new planning day. Returns never count.
+
+Both caps are constraints in the aggregate and individual-launch models,
+including seed models, bounds and secondary stages. Daily limits split launch
+phases at day boundaries. Export and dashboard validators check the same caps;
+the dashboard does not shift timestamps to make a plan pass. Changing a cap can
+change the feasible craft maximum; secondary launch minimization fixes the
+best feasible craft count and cannot lower it. Zero-cost missions stay available.
+
 ### Solver progress and performance
 
 ```sh
@@ -168,27 +188,48 @@ available. `--verbose-solver` enables HiGHS' own progress log; the runner also
 has a `VERBOSE_SOLVER` switch. Stage timings and final status/gap are saved in
 `plan_metadata.json`.
 
-When mission durations and nonoverlap already imply the per-slot launch limit,
-the exact aggregate model is used directly. Otherwise a continuous relaxation of the aggregate model
-first supplies a craft upper bound. A second LP minimizes launch count at the
-rounded-down bound to propose a compact initial scheduling problem. These LP
-solutions are estimates, not valid schedules. The continuous-time scheduling
-MILP then jointly chooses ships, phases, slots, and exact launch times. Ship
-selection depends only on event multiplier, with separate phase selection,
-avoiding a binary variable for every ship/phase combination. If the candidate
-cannot reach the upper bound, the launch capacity is expanded toward the full
-safe bound while budget remains. Timed-out attempts never exclude a plan.
-Only a feasible schedule attaining a proven bound (or a full-model proof) is
-reported as globally optimal. A launch-capped subproblem's local optimum is
-explicitly distinguished from a global proof.
+When durations and nonoverlap imply the per-slot rolling limit, the exact
+aggregate model is used. Otherwise the continuous-time model jointly chooses
+ship/target, phase, slot and launch time. It expands launch capacity toward the
+full safe bound while time remains; timed-out attempts never exclude a count
+plan. With an explicit total cap, that cap also tightens the full safe bound.
+A small resource LP supplies a valid craft upper bound, without pretending its
+counts are a schedule. Source-grounded seeds improve feasible incumbents;
+the full integer model keeps every nondominated ship/target option. A restricted
+seed's optimum is never used as a global craft bound.
 
-`--solver-seconds` is passed as HiGHS' `time_limit`. Rate-limited runs share a
-budget across stages; each call receives only its allocated remaining time.
-The budget excludes initial input/aggregate construction. HiGHS may overrun
-its limit in presolve or other noninterruptible operations, and Python model
-construction also takes time; this is not a hard process deadline.
-The benchmark runner uses a separate wall-clock cutoff and unique output
-folders, recording timeouts without reading stale output files.
+`--solver-seconds` is now one wall-clock budget, starting at input/model
+construction and shared across optimization stages. Every stage checks
+`time.monotonic()` and receives only its allocated remaining time.
+`--polish-seconds` adds an optional extra allowance for secondary objectives;
+it defaults to 10. If primary search finishes early, secondary objectives can
+use its unused time as well. `--polish-seconds 0` adds no extra allowance; it
+does not disable improvement within remaining primary time. No stage starts
+after its deadline. The runner exposes both budgets.
+
+Native HiGHS' soft `time_limit` is insufficient on its own. Solves now run in
+supervised worker processes (safe forkserver where available, spawn otherwise).
+The parent kills a worker at its stage deadline and validates its last atomic
+improving-solution checkpoint against the complete original model. Previously
+validated incumbents remain available between stages. SciPy fallback solves
+use the same supervision; SciPy cannot publish intermediate MIP incumbents.
+Startup, serialization, native model transfer and presolve consume the stage's
+allocation. HiGHS also receives its remaining native-call time limit.
+
+This is **not an exact deadline for the complete Python command**. Imports,
+OS scheduling/worker reaping, checkpoint validation, completing aggregate
+construction, cleanup and exports add overhead. `[Runtime]` and
+`optimization.timing` report construction, primary optimization, launch/fuel/
+completion minimization, total elapsed time and worker overruns/terminations.
+Each solver-run record includes requested/actual time and native setup/run
+telemetry when available. An outer process timer includes imports as well.
+
+See [the current runtime and launch-effort report](benchmarks/RUNTIME_AND_EFFORT.md)
+and reproduce its full-targeting cases with:
+
+```sh
+.venv/bin/python benchmarks/runtime_and_effort.py
+```
 
 Feasible incumbents are retained when a later solve times out. An inventory-only
 seed supplies a valid no-launch plan when scheduling finds nothing better. If
@@ -205,21 +246,23 @@ incumbent retention, fallback status, and failed-scheduling refinement.
 ### Schedule quality and timeline gaps
 
 Craft count remains the primary objective. After finding a feasible craft count,
-secondary solves fix it exactly and optimize allocated fuel, then last mission
-completion time, then earlier launches/phases and mission count. Consumed fuel
+secondary solves fix it exactly, minimize launch count, then allocated fuel,
+then last mission completion time, then earlier launches as a final tie-breaker. Consumed fuel
 is reported separately; it no longer takes priority over completion time. No
 weighted tradeoff can reduce crafts to improve timing. If a stage times out, its
 best feasible objective is locked and remaining time can improve lower
 priorities **conditionally**; the unproved minimum remains explicitly unproved.
 Use `--polish-seconds 10` (default) for the additional shared improvement budget,
-or `--polish-seconds 0` to disable these secondary stages.
+or `--polish-seconds 0` to add no extra time beyond the shared primary budget.
 
 When the individual-launch model is needed, secondary stages operate on its
 selected launch cap. Their scope and status are recorded in
 `optimization.secondary_stages` in `plan_metadata.json`; a local secondary
 optimum is not a claim of global fuel/timing optimality. Aggregate-model plans minimize completion time and prefer earlier launch phases.
 A final exact temporal solver fixes mission identities, event multipliers, slots
-and per-slot order, but allows **any** eligible awake phase of the same multiplier.
+and per-slot order, allowing eligible awake phases of the same multiplier.
+When a daily cap is configured, this last fixed-order subproblem also fixes
+each mission's already feasible daily assignment to preserve the daily counts.
 Forward constraint propagation computes the componentwise earliest feasible
 launches. For these fixed decisions, induction proves minimum completion and
 total start time; it is not a proof over other mission types or orders. It preserves
@@ -254,23 +297,24 @@ Install `requirements.txt` to use pinned native HiGHS 1.12.0 (`highspy`), includ
 feasible-incumbent warm starts. Without it the SciPy backend is still correct,
 but cannot warm-start MIPs and can be slower. The native backend uses one solver
 thread for reproducibility. A restricted-phase seed never provides a global
-craft bound; the subsequent full-model dual bound/proof does. Large full
+craft bound; the resource relaxation and full-model dual bounds do. Large full
 aggregate craft searches skip presolve after measured noninterruptible presolve
 overruns; seed and secondary searches retain presolve. All constraints stay in
 the model. Big-M values use actual phase/horizon bounds and interchangeable
 slots are symmetry-ordered by total launch count.
 
-The dashboard shows separate proof statuses for crafts, allocated fuel and
-completion, actual completion day, allocated fuel and consumed fuel. The
+The dashboard shows total/daily launch caps and separate proof statuses for
+crafts, launch count, allocated fuel and completion, actual completion day, allocated fuel and consumed fuel. The
 `optimization.guarantees` metadata distinguishes global fixed-craft/fuel
 certificates from capped/fixed-order results. A craft incumbent is never called
 a maximum without proof. Zero allocation is a proven minimum for that fixed
 craft count because input costs and allocations are nonnegative.
 
 Blank, nonnumeric, negative and infinite ship fuel costs are rejected. Explicit
-zeros remain zero. The current input data includes genuinely zero-cost Heavy
-and BCR rows; a fuel-first plan may therefore require many free missions. Do
-not change those costs without evidence. Surplus intermediate crafts and any
+zeros remain zero. Heavy missions remain zero on the four modeled fuel axes (they use Humility,
+which is outside this budget). BCR rows now include their source-confirmed
+Integrity costs of 0.00001/0.00002/0.00003T. Three other mission rows were also
+corrected against pinned wasmegg fuel data; no invented costs penalize free ships. Surplus intermediate crafts and any
 individually removable missions are eliminated only when the complete material
 balance stays feasible at the same target craft count. Remaining timestamps
 are not moved by this cleanup; the temporal model subsequently optimizes them.

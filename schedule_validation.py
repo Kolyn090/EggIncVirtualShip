@@ -15,8 +15,12 @@ def validate_launch_rate(times, limit, tolerance=TOLERANCE):
         raise ValueError(f'Launch-rate violation: more than {limit} launches in a rolling hour')
 
 
-def validate_schedule(rows, limit=0, horizon=None, durations=None, max_slots=None, event_windows=None, blackouts=()):
-    lanes={}
+def validate_schedule(rows, limit=0, horizon=None, durations=None, max_slots=None, event_windows=None, blackouts=(), max_total_launches=0, max_launches_per_day=0):
+    lanes={};daily={}
+    for cap in [max_total_launches,max_launches_per_day]:
+        if cap<0 or int(cap)!=cap:raise ValueError('Launch count limits must be nonnegative integers')
+    rows=list(rows)
+    if max_total_launches and len(rows)>max_total_launches:raise ValueError('Total launch cap exceeded')
     validate_launch_rate([],limit)
     for row in rows:
         start=float(row['start_hour']);end=float(row['end_hour']);slot=int(row['slot'])
@@ -32,6 +36,8 @@ def validate_schedule(rows, limit=0, horizon=None, durations=None, max_slots=Non
             eligible=next((boost for a,b,boost in event_windows if a-TOLERANCE<=start<b-TOLERANCE),None)
             boost=str(row['event_bonus']).lower()=='true'
             if eligible is None or boost!=eligible:raise ValueError('Mission event eligibility does not match actual launch time')
+        day=int(start//24);daily[day]=daily.get(day,0)+1
+        if max_launches_per_day and daily[day]>max_launches_per_day:raise ValueError('Daily launch cap exceeded across ship slots')
         lanes.setdefault(slot,[]).append((start,end))
     for lane in lanes.values():
         lane.sort()

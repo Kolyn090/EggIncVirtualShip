@@ -1,0 +1,160 @@
+{
+  "wall_seconds": 13.631405771000573,
+  "exit": 0,
+  "command": [
+    "/workspace/EggIncVirtualShip/.venv/bin/python",
+    "/tmp/EggIncVirtualShip-runtime-before/optimize_reggference.py",
+    "--target",
+    "ankh-4",
+    "--days",
+    "30",
+    "--fuel",
+    "500",
+    "--events",
+    "1",
+    "--event-hours",
+    "48",
+    "--sleep",
+    "00:00-11:00",
+    "--max-launches-per-hour",
+    "2",
+    "--inventory",
+    "/tmp/EggIncVirtualShip-runtime-before/data/inventory.csv",
+    "--solver-seconds",
+    "5",
+    "--polish-seconds",
+    "2",
+    "--output-dir",
+    "/workspace/EggIncVirtualShip/results/runtime-before"
+  ],
+  "optimization": {
+    "status": 1,
+    "message": "Time limit reached",
+    "gap": null,
+    "solver_runs": [
+      {
+        "stage": "Stage 1 seed (restricted phases)",
+        "runtime_seconds": 1.9720564099989133,
+        "status": 1,
+        "objective": 0.0,
+        "bound": null,
+        "gap": null
+      },
+      {
+        "stage": "Stage 1 crafts (full model)",
+        "runtime_seconds": 5.296847030000208,
+        "status": 1,
+        "objective": 0.0,
+        "bound": -6019.0,
+        "gap": null
+      },
+      {
+        "stage": "Secondary: fuel allocation",
+        "runtime_seconds": 0.6854632440008572,
+        "status": 0,
+        "objective": 0.0,
+        "bound": 0.0,
+        "gap": 0.0
+      },
+      {
+        "stage": "Secondary: mission completion time",
+        "runtime_seconds": 0.7254996029987524,
+        "status": 0,
+        "objective": 0.0,
+        "bound": 0.0,
+        "gap": 0.0
+      },
+      {
+        "stage": "Secondary: earlier launch phases",
+        "runtime_seconds": 0.45868877100292593,
+        "status": 0,
+        "objective": 0.0,
+        "bound": 0.0,
+        "gap": 0.0
+      }
+    ],
+    "upper_bound_crafts": 6019,
+    "secondary_stages": [
+      {
+        "objective": "fuel allocation",
+        "status": 0,
+        "accepted": true,
+        "value": 0.0,
+        "scope": "exact aggregate model",
+        "bound": 0.0,
+        "gap": 0.0,
+        "proven_in_scope": true,
+        "fixed_craft_count": 0,
+        "higher_priority_locks": []
+      },
+      {
+        "objective": "mission completion time",
+        "status": 0,
+        "accepted": true,
+        "value": 0.0,
+        "scope": "exact aggregate model",
+        "bound": 0.0,
+        "gap": 0.0,
+        "proven_in_scope": true,
+        "fixed_craft_count": 0,
+        "higher_priority_locks": [
+          {
+            "objective": "fuel allocation",
+            "value": 0.0,
+            "proven_in_scope": true
+          }
+        ]
+      },
+      {
+        "objective": "earlier launch phases",
+        "status": 0,
+        "accepted": true,
+        "value": 0.0,
+        "scope": "exact aggregate model",
+        "bound": 0.0,
+        "gap": 0.0,
+        "proven_in_scope": true,
+        "fixed_craft_count": 0,
+        "higher_priority_locks": [
+          {
+            "objective": "fuel allocation",
+            "value": 0.0,
+            "proven_in_scope": true
+          },
+          {
+            "objective": "mission completion time",
+            "value": 0.0,
+            "proven_in_scope": true
+          }
+        ]
+      }
+    ],
+    "guarantees": {
+      "crafts": {
+        "proven": false,
+        "value": 0,
+        "bound": 6019,
+        "gap": null
+      },
+      "allocated_fuel": {
+        "proven": true,
+        "value": 0.0,
+        "bound": 0.0,
+        "gap": 0.0,
+        "scope": "nonnegative fuel lower bound attained by feasible plan",
+        "proven_in_scope": true,
+        "fixed_craft_count": 0
+      },
+      "completion": {
+        "proven": true,
+        "value": 0.0,
+        "bound": 0.0,
+        "gap": 0.0,
+        "scope": "exact aggregate model",
+        "proven_in_scope": true,
+        "conditional_proven": true
+      }
+    },
+    "removed_surplus_missions": 0
+  }
+}

@@ -1,5 +1,8 @@
 # wasmegg expectations and launch targeting
 
+Later runtime, launch-effort, and source-confirmed fuel corrections are documented
+in [the runtime and effort report](../benchmarks/RUNTIME_AND_EFFORT.md).
+
 The default CSV now comes from the repository's wasmegg loot observations, using
 its original TypeScript calculations through Node. It is an empirical point
 estimate, **not an exact game probability calculation or a simulation**. No

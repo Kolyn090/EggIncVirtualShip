@@ -55,7 +55,9 @@ def build(results: Path, output: Path):
     validate_schedule(data['schedule'],int(data['metadata'].get('max_launches_per_hour',0)),
                       data['metadata'].get('horizon_hours'),max_slots=data['metadata'].get('parallel'),
                       event_windows=[(float(w['start_hour']),float(w['end_hour']),str(w['event_bonus']).lower()=='true') for w in data['event_windows']],
-                      blackouts=[(float(w['start_hour']),float(w['end_hour'])) for w in data['sleep_windows']])
+                      blackouts=[(float(w['start_hour']),float(w['end_hour'])) for w in data['sleep_windows']],
+                      max_total_launches=int(data['metadata'].get('max_total_launches',0)),
+                      max_launches_per_day=int(data['metadata'].get('max_launches_per_day',0)))
     data['summary']={
         'completion_hour':max((float(r['end_hour']) for r in data['schedule']),default=0.),
         'allocated_fuel_T':sum(float(r['allocated_T']) for r in data['fuel_allocation']) if data['fuel_allocation'] is not None else None,
@@ -84,7 +86,7 @@ TEMPLATE = r'''<!doctype html>
 .table-panel tbody td{background:var(--panel)}
 .gap-details{display:block;flex:0 0 150px;align-self:flex-start;max-height:240px;overflow:auto}.gap-details summary{cursor:pointer;padding:8px;min-height:70px}.gap-breakdown{text-align:left;max-height:170px;overflow:auto}.gap-breakdown ul{padding-left:16px}.gap-reason{display:block;padding:4px;border-left:3px solid #7091ab;margin:3px 0}.gap-reason.sleep{border-color:#b28dce;background:#2d2139}.gap-reason.no-launch{border-color:#e48d86;background:#3b2728}.gap-reason.event-wait{border-color:#e5b45d;background:#48371e}
 </style></head><body><main>
-<header class="head"><div><div class="eyebrow">Mission optimization / expected drops</div><h1 id="targetTitle">Crafting plan</h1><p>Understand launches, event bonuses, crafting, and remaining materials at a glance.</p></div><div><div class="tag" id="horizon"></div><div class="tag" id="launchLimit"></div><div class="tag" id="planStatus"></div><div class="tag" id="fuelStatus"></div><div class="tag" id="completionStatus"></div><div class="tag" id="completionDay"></div></div></header>
+<header class="head"><div><div class="eyebrow">Mission optimization / expected drops</div><h1 id="targetTitle">Crafting plan</h1><p>Understand launches, event bonuses, crafting, and remaining materials at a glance.</p></div><div><div class="tag" id="horizon"></div><div class="tag" id="launchLimit"></div><div class="tag" id="planStatus"></div><div class="tag" id="launchCountStatus"></div><div class="tag" id="activityLimits"></div><div class="tag" id="fuelStatus"></div><div class="tag" id="completionStatus"></div><div class="tag" id="completionDay"></div></div></header>
 <section class="stats"><div class="stat"><div class="k">Total achievable target items</div><strong id="craftTotal">—</strong><small id="inventorySummary"></small></div><div class="stat"><div class="k">Total launches</div><strong id="launchTotal">—</strong><small id="boostTotal"></small></div><div class="stat"><div class="k">Allocated fuel</div><strong id="allocatedFuelTotal">—</strong><small id="fuelTotal"></small></div><div class="stat"><div class="k">Mission slots</div><strong id="slotTotal">—</strong><small id="eventTotal"></small></div></section>
 <div class="section"><div><h2>Recommended ships</h2><small>Grouped across all three slots and planning phases</small></div><div class="filters"><input id="search" placeholder="Filter ship names" aria-label="Filter ships"><select id="boostFilter" aria-label="Filter launches"><option value="all">All launches</option><option value="boost">Boosted only</option><option value="normal">Regular only</option></select></div></div>
 <div id="ships" class="shipgrid"></div><p class="note" id="zeroFuelNote"></p>
@@ -102,8 +104,10 @@ document.getElementById('launchLimit').textContent=data.metadata?.max_launches_p
 const optimization=data.metadata?.optimization;
 document.getElementById('planStatus').textContent=optimization ? (optimization.status===0?'Craft maximum proven':'Feasible plan; craft maximum unproven') : 'Legacy plan: proof status unavailable';
 const guarantees=optimization?.guarantees;
-document.getElementById('fuelStatus').textContent=guarantees?.allocated_fuel?.proven?'Minimum allocated fuel proven (fixed craft count)':'Minimum fuel unproven';
-document.getElementById('completionStatus').textContent=guarantees?.completion?.proven?'Minimum completion proven (fixed crafts/fuel)':'Minimum completion unproven';
+document.getElementById('activityLimits').textContent=`Total launch cap: ${data.metadata?.max_total_launches||'unlimited'}; per planning day (all slots): ${data.metadata?.max_launches_per_day||'unlimited'}`;
+document.getElementById('launchCountStatus').textContent=guarantees?.launch_count?.proven?'Minimum launch count proven (fixed crafts)':'Minimum launch count unproven';
+document.getElementById('fuelStatus').textContent=guarantees?.allocated_fuel?.proven?'Minimum allocated fuel proven (fixed crafts/launches)':'Minimum fuel unproven';
+document.getElementById('completionStatus').textContent=guarantees?.completion?.proven?'Minimum completion proven (fixed crafts/launches/fuel)':'Minimum completion unproven';
 const targetId=data.metadata?.target||'metronome-4';
 const targetName=({'metronome-4':'Reggference Quantum Metronome','ankh-4':'Brilliant Tungsten Ankh'})[targetId]||targetId;
 document.title=targetName+' • Mission Plan';

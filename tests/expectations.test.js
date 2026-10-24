@@ -47,3 +47,13 @@ test('generation is deterministic and matches published bytes',async()=>{
 test('missing required inputs fail clearly without a legacy fallback',async()=>{
  await assert.rejects(generate({recipeDir:path.join(ROOT,'data/does-not-exist')}));
 });
+
+test('mission fuel columns match pinned source, including tiny BCR costs and free Heavy',()=>{
+ const {shipId}=require('../scripts/generate_ship_expectations');
+ const lines=fs.readFileSync(path.join(ROOT,'data/mission.csv'),'utf8').trim().split(/\r?\n/).map(x=>x.split(','));
+ const header=lines.shift();const names={curiousity:'CURIOSITY',kindness:'KINDNESS',resilence:'RESILIENCE',integrity:'INTEGRITY'};
+ for(const row of lines){if(row[0]==='chicken-one-0')continue;const m=data.runtime.allMissionTypes.find(m=>shipId(m)===row[0]);assert(m,row[0]);
+  const costs=Object.fromEntries(m.virtueFuels.map(f=>[data.runtime.ei.Egg[f.egg],f.amount/1e12]));
+  for(const [column,egg] of Object.entries(names))assert.equal(Number(row[header.indexOf(column)]),costs[egg]||0,row[0]+'/'+column);
+ }
+});

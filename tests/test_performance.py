@@ -30,6 +30,7 @@ class PerformanceTests(unittest.TestCase):
     def test_feasible_time_limit_is_exported_not_labelled_optimal(self):
         def time_limited(*a,**kw):
             kw.pop('incumbent',None)
+            kw['options'].pop('wall_deadline',None)
             result=milp(*a,**kw)
             result.status=1;result.message='Time limit reached';result.mip_gap=.5
             return result
