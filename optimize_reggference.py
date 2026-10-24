@@ -7,6 +7,7 @@ import csv
 import json
 import re
 import time
+import warnings
 from copy import copy
 from collections import defaultdict
 from pathlib import Path
@@ -14,6 +15,7 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import milp, Bounds, LinearConstraint
 from scipy.sparse import lil_matrix
+from schedule_validation import validate_launch_rate, validate_schedule
 
 FUELS=('curiousity','kindness','resilence','integrity')
 TARGET='metronome-4'
@@ -122,31 +124,24 @@ def launch_phases(event_phases, sleeps):
     if not phases: raise ValueError('No launch windows remain after sleep exclusions')
     return phases
 
-def validate_launch_rate(times, limit, tolerance=1e-7):
-    """Check every half-open rolling window [t, t + 1 hour)."""
-    if limit < 0 or int(limit) != limit:
-        raise ValueError('Maximum launches per hour must be a nonnegative integer')
-    ordered = np.sort(np.asarray(list(times), dtype=float))
-    if not np.isfinite(ordered).all():
-        raise ValueError('Launch times must be finite')
-    if limit and len(ordered) > limit:
-        gaps = ordered[limit:] - ordered[:-limit]
-        if (gaps < 1 - tolerance).any():
-            raise ValueError(f'Launch-rate violation: more than {limit} launches in a rolling hour')
-
-
 def finite_or_none(value):
     return value if value is None or np.isfinite(value) else None
 
 
-def run_milp(args, objective, *, label='MILP', seconds=None, maximize=True, **kwargs):
+def run_milp(args, objective, *, label='MILP', seconds=None, maximize=True, objective_name=None, **kwargs):
     seconds=args.solver_seconds if seconds is None else seconds
     deadline=getattr(args,'solver_deadline',None)
     if deadline is not None:seconds=min(seconds,max(.001,deadline-time.perf_counter()))
     print(f'[{label}] Solving: {len(objective)} variables; time limit {seconds:.3f}s',flush=True)
     started=time.perf_counter()
-    result=milp(objective,options={'time_limit':max(0.001,seconds),
-                'mip_rel_gap':0.0,'disp':getattr(args,'verbose_solver',False)},**kwargs)
+    # SciPy forwards supported HiGHS options not explicitly listed in its wrapper.
+    # Tight tolerances keep sub-microhour overlaps out of lexicographic locks.
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore',message='Unrecognized options detected:.*',category=RuntimeWarning)
+        result=milp(objective,options={'time_limit':max(0.001,seconds),
+                    'mip_rel_gap':0.0,'disp':getattr(args,'verbose_solver',False),
+                    'mip_feasibility_tolerance':1e-9,'primal_feasibility_tolerance':1e-9,
+                    'dual_feasibility_tolerance':1e-9},**kwargs)
     elapsed=time.perf_counter()-started
     result.solver_runtime_seconds=elapsed
     if hasattr(args,'solver_runs'):
@@ -156,10 +151,102 @@ def run_milp(args, objective, *, label='MILP', seconds=None, maximize=True, **kw
     feasible=getattr(result,'fun',None)
     gap=getattr(result,'mip_gap',None)
     bound=getattr(result,'mip_dual_bound',None)
-    print(f'[{label}] Best feasible objective ({"maximize crafts" if maximize else "minimize launches"}): {(-feasible if maximize else feasible) if feasible is not None else "none"}; '
+    print(f'[{label}] Best feasible objective ({objective_name or ("maximize crafts" if maximize else "minimize launches")}): {(-feasible if maximize else feasible) if feasible is not None else "none"}; '
           f'bound: {(-bound if maximize else bound) if bound is not None else "unavailable"}; '
           f'gap: {gap if gap is not None else "unavailable"}',flush=True)
     return result
+
+
+def polish_model(args, incumbent, matrix, lbs, ubs, low, up, integrality, goal, objectives, scope, validate=None):
+    """Strict priorities: only proceed after proving the preceding subproblem."""
+    from scipy.sparse import vstack, csr_matrix
+    budget=getattr(args,'polish_seconds',10.)
+    stages=[]
+    if budget<=0:return incumbent,stages
+    stage_args=copy(args)
+    if hasattr(stage_args,'solver_deadline'):del stage_args.solver_deadline
+    deadline=min(time.perf_counter()+budget,getattr(args,'polish_deadline',float('inf')))
+    if not scope.startswith('fixed mission'):deadline-=min(2.,budget*.2)
+    stage_args.solver_deadline=deadline
+    lo=np.array(low,copy=True);hi=np.array(up,copy=True)
+    lo[goal]=hi[goal]=round(incumbent[goal])
+    x=incumbent.copy()
+    for number,(name,objective) in enumerate(objectives):
+        remaining=deadline-time.perf_counter()
+        if remaining<=.001:break
+        # Keep the current incumbent feasible and forbid worsening this priority.
+        bound=float(objective@x)
+        row=csr_matrix(objective.reshape(1,-1))
+        candidate_matrix=vstack([matrix,row],format='csr')
+        candidate_lbs=np.r_[lbs,-np.inf];candidate_ubs=np.r_[ubs,bound+1e-7]
+        stage_args.solver_seconds=remaining/(len(objectives)-number)
+        result=run_milp(stage_args,objective,label='Secondary: '+name,maximize=False,objective_name=name,
+                        integrality=integrality,bounds=Bounds(lo,hi),
+                        constraints=LinearConstraint(candidate_matrix,candidate_lbs,candidate_ubs))
+        accepted=False
+        if result.x is not None:
+            proposal=result.x
+            residual=matrix@proposal
+            feasible=(np.all(residual>=np.asarray(lbs)-1e-5) and np.all(residual<=np.asarray(ubs)+1e-5)
+                      and abs(proposal[goal]-lo[goal])<1e-5 and float(objective@proposal)<=bound+1e-6)
+            if feasible and validate is not None:
+                try:validate(proposal)
+                except ValueError:feasible=False
+            if feasible:x=proposal.copy();accepted=True
+        stages.append({'objective':name,'status':int(result.status),'accepted':accepted,
+                       'value':float(objective@x),'scope':scope})
+        if result.status!=0 or not accepted:
+            print('[Secondary] Priority not proven optimal; retaining feasible incumbent and stopping lower priorities',flush=True)
+            break
+        # Integer objectives may be locked exactly. Continuous objectives allow
+        # only a small numerical tolerance, never a weighted objective tradeoff.
+        matrix=candidate_matrix;lbs=candidate_lbs;ubs=np.r_[ubs,float(objective@x)+1e-7]
+    return x,stages
+
+
+def compact_fixed_schedule(args, schedule, phases):
+    """Solve a timing LP for fixed missions, phases, slots and launch order.
+
+    This is a constrained scheduling solve, not a dashboard shift. It preserves
+    every drop/fuel/crafting decision and the rolling rule across all slots.
+    """
+    if not schedule or getattr(args,'polish_seconds',10.)<=0:return schedule,[]
+    from scipy.sparse import lil_matrix
+    ordered=sorted(schedule,key=lambda r:(r[4],r[0]))
+    size=len(ordered);H=args.days*24;limit=getattr(args,'max_launches_per_hour',0)
+    rows=[];rhs=[];last={}
+    for i,row in enumerate(ordered):
+        slot,p,ship,boost,t,end=row;duration=end-t
+        rows.append({i:1,size:-1});rhs.append(-duration)
+        if slot in last:
+            k=last[slot];previous=ordered[k]
+            rows.append({k:1,i:-1});rhs.append(-(previous[5]-previous[4]))
+        last[slot]=i
+        if limit and i:
+            rows.append({i-1:1,i:-1});rhs.append(0)
+        if limit and i>=limit:
+            rows.append({i-limit:1,i:-1});rhs.append(-1)
+    A=lil_matrix((len(rows),size+1))
+    for k,row in enumerate(rows):
+        for col,value in row.items():A[k,col]=value
+    lows=[phases[row[1]-1][0] for row in ordered]+[0.]
+    highs=[min(phases[row[1]-1][1]-1/3600,H-(row[5]-row[4])) for row in ordered]+[H]
+    witness=np.array([row[4] for row in ordered]+[max(row[5] for row in ordered)])
+    finish=np.zeros(size+1);finish[-1]=1
+    early=np.ones(size+1);early[-1]=0
+    # Reuse the strict hierarchy helper, fixing a dummy craft variable to zero.
+    from scipy.sparse import hstack
+    matrix=hstack([A.tocsr(),np.zeros((len(rows),1))],format='csr')
+    witness=np.r_[witness,0.];lows.append(0.);highs.append(0.)
+    finish=np.r_[finish,0.];early=np.r_[early,0.]
+    fixed_args=copy(args);fixed_args.polish_seconds=min(2.,getattr(args,'polish_seconds',10.))
+    x,stages=polish_model(fixed_args,witness,matrix,np.full(len(rows),-np.inf),np.array(rhs),
+                         lows,highs,np.zeros(size+2),size+1,
+                         [('fixed-plan completion time',finish),('fixed-plan earlier launches',early)],
+                         'fixed mission identities, phases, slots and global launch order')
+    polished=[(r[0],r[1],r[2],r[3],float(x[i]),float(x[i])+r[5]-r[4]) for i,r in enumerate(ordered)]
+    validate_launch_rate([r[4] for r in polished],limit)
+    return polished,stages
 
 
 def solve_timed_launches(args, available, hours, fuel, phases, mats, groups, outputs, inventory, rate, target, launch_cap=None, target_upper=None):
@@ -193,6 +280,8 @@ def solve_timed_launches(args, available, hours, fuel, phases, mats, groups, out
     choices_by_launch=[{(p,j):var(hi=1,discrete=True) for p,j in choices} for _ in range(nlaunch)]
     phase_choices=[{p:var(hi=1,discrete=True) for p in range(len(phases))} for _ in range(nlaunch)]
     crafts={rid:var(discrete=True) for rid,_ in groups}
+    makespan=var(hi=H)
+    active_times=[var(hi=H) for _ in range(nlaunch)]
     blocks=[var(hi=int(np.floor(args.fuel/args.fuel_step+1e-9)),discrete=True) for _ in FUELS]
     ri=[];ci=[];values=[];lbs=[];ubs=[]
     def constraint(row,lo=-np.inf,hi=np.inf):
@@ -227,9 +316,15 @@ def solve_timed_launches(args, available, hours, fuel, phases, mats, groups, out
             constraint(row,lo=a-M)
             row={col:M for col in cols};row[times[i]]=1
             constraint(row,hi=min(b-1/3600,H)+M)
+        row=active(i,-H);row[active_times[i]]=1;constraint(row,hi=0)
+        constraint({active_times[i]:1,times[i]:-1},hi=0)
+        row=active(i,-H);row.update({active_times[i]:1,times[i]:-1});constraint(row,lo=-H)
         duration={col:hours[j] for (p,j),col in choices_i.items()}
         row=dict(duration);row[times[i]]=1
         constraint(row,hi=H)
+        row=active(i,-H);row.update({makespan:1,times[i]:-1})
+        for col,h in duration.items():row[col]-=h
+        constraint(row,lo=-H)
         for slot,u in enumerate(slots[i]):
             if i:
                 constraint({ready[i][slot]:1,ready[i-1][slot]:-1},lo=0)
@@ -276,17 +371,41 @@ def solve_timed_launches(args, available, hours, fuel, phases, mats, groups, out
     discrete=np.array(integer,dtype=bool)
     if (np.abs(x[discrete]-np.rint(x[discrete]))>1e-4).any():
         raise RuntimeError('Nonintegral solution returned')
-    schedule=[]
-    for i,choices_i in enumerate(choices_by_launch):
-        selected=[(p,j) for (p,j),col in choices_i.items() if x[col]>0.5]
-        if not selected:continue
-        boost,j=selected[0]
-        p=next(p for p,col in phase_choices[i].items() if x[col]>0.5)
-        slot=next(k for k,col in enumerate(slots[i]) if x[col]>0.5)
-        t=float(x[times[i]])
-        schedule.append((slot+1,p+1,available[j],phases[p][2],t,t+hours[j]))
-    validate_launch_rate([r[4] for r in schedule],limit)
-    return result, schedule, {rid:int(round(x[col])) for rid,col in crafts.items()}, [int(round(x[col])) for col in blocks]
+    def extract(x):
+        schedule=[]
+        for i,choices_i in enumerate(choices_by_launch):
+            selected=[(p,j) for (p,j),col in choices_i.items() if x[col]>0.5]
+            if not selected:continue
+            boost,j=selected[0]
+            p=next(p for p,col in phase_choices[i].items() if x[col]>0.5)
+            slot=next(k for k,col in enumerate(slots[i]) if x[col]>0.5)
+            t=float(x[times[i]])
+            schedule.append((slot+1,p+1,available[j],phases[p][2],t,t+hours[j]))
+        validate_launch_rate([r[4] for r in schedule],limit)
+        return schedule, {rid:int(round(x[col])) for rid,col in crafts.items()}, [int(round(x[col])) for col in blocks]
+    def validate_timed(proposal):
+        rows=extract(proposal)[0]
+        records=[dict(zip(['slot','phase','ship','event_bonus','start_hour','end_hour'],row)) for row in rows]
+        validate_schedule(records,limit,H,dict(zip(available,hours)),args.parallel,phases)
+    def polish(deadline=None):
+        polish_args=copy(args)
+        if deadline is not None:polish_args.polish_deadline=deadline
+        allocation=np.zeros(len(lower));allocation[blocks]=args.fuel_step
+        consumption=np.zeros(len(lower))
+        count_obj=np.zeros(len(lower))
+        for choices_i in choices_by_launch:
+            for (boost,j),col in choices_i.items():consumption[col]=fuel[j].sum();count_obj[col]=1
+        completion=np.zeros(len(lower));completion[makespan]=1
+        earlier=np.zeros(len(lower));earlier[active_times]=1
+        improved,stages=polish_model(polish_args,result.x,matrix,np.array(lbs),np.array(ubs),lower,upper,np.array(integer),crafts[goal],
+                    [('fuel allocation',allocation),('fuel consumption',consumption),('mission completion time',completion),
+                     ('earlier launches',earlier),('mission count',count_obj)],f'continuous timed model, launch cap {nlaunch} (safe bound {safe_cap})',validate=validate_timed)
+        result.secondary_stages=stages
+        return extract(improved)
+    result.polish_schedule=polish
+    schedule,craft_counts,fuel_blocks=extract(x)
+    return result,schedule,craft_counts,fuel_blocks
+
 
 
 def solve(args):
@@ -344,7 +463,8 @@ def solve(args):
     start_size=slots*np_
     rec_size=len(groups)
     fuel_blocks_offset=count_size+last_size+start_size+rec_size
-    n=fuel_blocks_offset+len(FUELS)
+    n=fuel_blocks_offset+len(FUELS)+1
+    makespan=n-1
     def block(k):return fuel_blocks_offset+k
     def count(slot,p,j):return (slot*np_+p)*ns+j
     def last(slot,p,j):return count_size+count(slot,p,j)
@@ -408,6 +528,11 @@ def solve(args):
                 row[count(slot,p,j)]+=hours[j]
                 row[last(slot,p,j)]+=M-hours[j]
             constraint(row,hi=b-eps+M)
+        # Completion time only depends on nonempty phases, not later empty days.
+        for p in range(np_):
+            row={makespan:1,start(slot,p):-1}
+            for j in range(ns):row[count(slot,p,j)]=-hours[j];row[last(slot,p,j)]=-H
+            constraint(row,lo=-H)
         # End every slot before the horizon.
         row=defaultdict(float);row[start(slot,np_-1)]+=1
         for j in range(ns):row[count(slot,np_-1,j)]+=hours[j]
@@ -425,7 +550,8 @@ def solve(args):
                 up[last(slot,p,j)]=1
                 up[count(slot,p,j)]=min(max_launches[j],int(np.ceil((phases[p][1]-phases[p][0])/hours[j]-1e-10)))
     for k in range(len(FUELS)):up[block(k)]=int(np.floor(args.fuel/args.fuel_step+1e-9))
-    integrality=np.ones(n);integrality[count_size+last_size:recipes_offset]=0
+    up[makespan]=H
+    integrality=np.ones(n);integrality[count_size+last_size:recipes_offset]=0;integrality[makespan]=0
     goal_rid=next((rid for rid,_ in groups if outputs[rid]==target),None)
     if goal_rid is None:raise ValueError('Missing final crafting recipe')
     obj=np.zeros(n);obj[ridcol[goal_rid]]=-1
@@ -513,6 +639,9 @@ def solve(args):
         result['total_optimization_seconds']=time.perf_counter()-solve_started
         print(f'[Two-stage] Total optimization wall time: {result["total_optimization_seconds"]:.3f}s; '
               f'feasible crafts {achieved}; upper bound {target_upper}; gap {getattr(result,"mip_gap",None)}; {result.message}',flush=True)
+        args.polish_deadline=time.perf_counter()+getattr(args,'polish_seconds',10.)
+        if hasattr(result,'polish_schedule'):
+            schedule,craft_counts,fuel_blocks=result.polish_schedule(args.polish_deadline)
         x=np.zeros(n)
         for slot,p,ship,boost,t,end in schedule:
             x[count(slot-1,p-1,available.index(ship))]+=1
@@ -538,10 +667,22 @@ def solve(args):
             result.message='Time limit; explicit zero-launch fallback (not a solver incumbent or optimality proof)'
             dual=getattr(result,'mip_dual_bound',None)
             result.mip_gap=max(0.,-dual) if dual is not None and np.isfinite(dual) else None
-        x=result.x
+        allocation=np.zeros(n)
+        for k in range(len(FUELS)):allocation[block(k)]=args.fuel_step
+        consumption=np.zeros(n);earlier=np.zeros(n);mission_count=np.zeros(n)
+        for slot in range(slots):
+            for p,(a,b,boost) in enumerate(phases):
+                for j in range(ns):
+                    col=count(slot,p,j);consumption[col]=fuel_sum[j];earlier[col]=a;mission_count[col]=1
+        completion=np.zeros(n);completion[makespan]=1
+        args.polish_deadline=time.perf_counter()+getattr(args,'polish_seconds',10.)
+        x,secondary_stages=polish_model(args,result.x,A.tocsr(),np.array(lbs),np.array(ubs),low,up,integrality,ridcol[goal_rid],
+                 [('fuel allocation',allocation),('fuel consumption',consumption),('mission completion time',completion),
+                  ('earlier launch phases',earlier),('mission count',mission_count)],'unlimited aggregate model')
+        result.secondary_stages=secondary_stages
         if np.max(np.abs(x[:count_size+last_size]-np.rint(x[:count_size+last_size])))>1e-4:
             raise RuntimeError('Nonintegral solution returned')
-        x[:count_size+last_size]=np.rint(x[:count_size+last_size]);x[recipes_offset:]=np.rint(x[recipes_offset:])
+        x[:count_size+last_size]=np.rint(x[:count_size+last_size]);x[recipes_offset:fuel_blocks_offset+len(FUELS)]=np.rint(x[recipes_offset:fuel_blocks_offset+len(FUELS)])
         detail=[];schedule=[]
         for slot in range(slots):
             actual_time=0.
@@ -560,6 +701,8 @@ def solve(args):
                     if num:detail.append({'slot':slot+1,'phase':p+1,'ship':available[j],'event_bonus':boost,'launches':num,
                                            'total_hours':num*hours[j], 'total_fuel_T':num*fuel_sum[j],
                                            **{f+'_T':num*fuel[j,k] for k,f in enumerate(FUELS)}})
+    schedule,timing_stages=compact_fixed_schedule(args,schedule,phases)
+    result.secondary_stages=getattr(result,'secondary_stages',[])+timing_stages
     schedule_df=pd.DataFrame(schedule,columns=['slot','phase','ship','event_bonus','start_hour','end_hour'])
     for row in schedule_df.itertuples():
         a,b,boost=phases[row.phase-1]
@@ -570,6 +713,7 @@ def solve(args):
         lane=lane.sort_values('start_hour')
         if (lane.start_hour.to_numpy()[1:] < lane.end_hour.to_numpy()[:-1]-1e-7).any():
             raise RuntimeError('Schedule validation failed: overlapping missions')
+    validate_schedule(schedule_df.to_dict('records'),launch_limit,H,dict(zip(available,hours)),slots,event_phases,sleeps)
     craft=pd.DataFrame([{'material_id':outputs[rid],'crafts':int(x[ridcol[rid]])} for rid,_ in groups if x[ridcol[rid]]>0.5], columns=['material_id','crafts'])
     balance=[]
     for mat in mats:
@@ -601,7 +745,7 @@ def solve(args):
         print(f'Launch blackouts: {len(sleeps)} window(s)')
     if args.output_dir:
         out=Path(args.output_dir);out.mkdir(parents=True,exist_ok=True)
-        (out/'plan_metadata.json').write_text(json.dumps({'target':target,'missing_drop_materials':missing_rates,'unknown_drop_materials':unknown_rates,'max_launches_per_hour':launch_limit,'optimization':{'status':int(result.status),'message':result.message,'gap':finite_or_none(getattr(result,'mip_gap',None)),'solver_runs':args.solver_runs,'upper_bound_crafts':getattr(result,'upper_bound_crafts',None)}},indent=2)+'\n',encoding='utf-8')
+        (out/'plan_metadata.json').write_text(json.dumps({'target':target,'missing_drop_materials':missing_rates,'unknown_drop_materials':unknown_rates,'max_launches_per_hour':launch_limit,'parallel':slots,'horizon_hours':H,'optimization':{'status':int(result.status),'message':result.message,'gap':finite_or_none(getattr(result,'mip_gap',None)),'solver_runs':args.solver_runs,'upper_bound_crafts':getattr(result,'upper_bound_crafts',None),'secondary_stages':getattr(result,'secondary_stages',[])}},indent=2)+'\n',encoding='utf-8')
         plan.to_csv(out/'launch_plan.csv',index=False)
         fuel_allocation.to_csv(out/'fuel_allocation.csv',index=False)
         schedule_df.to_csv(out/'schedule.csv',index=False)
@@ -609,6 +753,10 @@ def solve(args):
         balance_df.to_csv(out/'material_balance.csv',index=False)
         pd.DataFrame([{'phase':i+1,'start_hour':a,'end_hour':b,'event_bonus':boost} for i,(a,b,boost) in enumerate(event_phases)]).to_csv(out/'event_windows.csv',index=False)
         pd.DataFrame([{'start_hour':a,'end_hour':b} for a,b in sleeps],columns=['start_hour','end_hour']).to_csv(out/'sleep_windows.csv',index=False)
+        restrictions=[]
+        for kind,daily,absolute in [('sleep',args.sleep,[]),('no-launch',[],args.no_launch)]:
+            for a,b in sleep_windows(args.days,daily,absolute):restrictions.append({'start_hour':a,'end_hour':b,'kind':kind})
+        pd.DataFrame(restrictions,columns=['start_hour','end_hour','kind']).to_csv(out/'launch_restrictions.csv',index=False)
         print('Output:',out)
         try:
             from build_plan_dashboard import build
@@ -619,6 +767,7 @@ def solve(args):
 
 def main():
     p=argparse.ArgumentParser(description='Optimize Reggference expected crafting across multiple events')
+    p.add_argument('--polish-seconds',type=float,default=10,help='Additional budget for lexicographic schedule improvement; 0 disables')
     p.add_argument('--verbose-solver',action='store_true',help='Show HiGHS progress output')
     p.add_argument('--max-launches-per-hour',type=int,default=0,help='Maximum launches across all slots per rolling hour; 0 is unlimited')
     p.add_argument('--target',default=TARGET,help='Craftable material ID from the recipe CSV')
@@ -640,7 +789,7 @@ def main():
     p.add_argument('--output-dir',default='results')
     p.add_argument('--solver-seconds',type=float,default=30)
     a=p.parse_args()
-    if a.days<=0 or a.fuel<0 or a.fuel_step<=0 or a.parallel<1 or a.events<0 or a.event_hours<=0 or a.event_multiplier<1 or a.max_launches_per_hour<0 or not np.isfinite(a.solver_seconds) or a.solver_seconds<=0:p.error('Invalid arguments')
+    if a.days<=0 or a.fuel<0 or a.fuel_step<=0 or a.parallel<1 or a.events<0 or a.event_hours<=0 or a.event_multiplier<1 or a.max_launches_per_hour<0 or not np.isfinite(a.solver_seconds) or a.solver_seconds<=0 or not np.isfinite(a.polish_seconds) or a.polish_seconds<0:p.error('Invalid arguments')
     try:
         solve(a)
     except ValueError as exc:
