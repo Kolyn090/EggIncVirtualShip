@@ -38,6 +38,7 @@ def build(results: Path, output: Path):
     if missing:
         raise SystemExit('Missing optimizer results: ' + ', '.join(missing) + f' in {results}')
     data = {n.replace('.csv',''):read_rows(results / n) for n in REQUIRED}
+    data['fuel_allocation']=read_rows(results/'fuel_allocation.csv') if (results/'fuel_allocation.csv').exists() else None
     data['sleep_windows'] = read_rows(results/'sleep_windows.csv') if (results/'sleep_windows.csv').exists() else []
     detailed=results/'launch_restrictions.csv'
     restrictions=read_rows(detailed) if detailed.exists() else [dict(w,kind='unclassified-blackout') for w in data['sleep_windows']]
@@ -55,6 +56,11 @@ def build(results: Path, output: Path):
                       data['metadata'].get('horizon_hours'),max_slots=data['metadata'].get('parallel'),
                       event_windows=[(float(w['start_hour']),float(w['end_hour']),str(w['event_bonus']).lower()=='true') for w in data['event_windows']],
                       blackouts=[(float(w['start_hour']),float(w['end_hour'])) for w in data['sleep_windows']])
+    data['summary']={
+        'completion_hour':max((float(r['end_hour']) for r in data['schedule']),default=0.),
+        'allocated_fuel_T':sum(float(r['allocated_T']) for r in data['fuel_allocation']) if data['fuel_allocation'] is not None else None,
+        'consumed_fuel_T':sum(float(r['total_fuel_T']) for r in data['launch_plan']),
+        'launches':len(data['schedule'])}
     blob = json.dumps(data, ensure_ascii=False).replace('</', '<\\/')
     html = TEMPLATE.replace('/*__DATA__*/', blob)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -78,10 +84,10 @@ TEMPLATE = r'''<!doctype html>
 .table-panel tbody td{background:var(--panel)}
 .gap-details{display:block;flex:0 0 150px;align-self:flex-start;max-height:240px;overflow:auto}.gap-details summary{cursor:pointer;padding:8px;min-height:70px}.gap-breakdown{text-align:left;max-height:170px;overflow:auto}.gap-breakdown ul{padding-left:16px}.gap-reason{display:block;padding:4px;border-left:3px solid #7091ab;margin:3px 0}.gap-reason.sleep{border-color:#b28dce;background:#2d2139}.gap-reason.no-launch{border-color:#e48d86;background:#3b2728}.gap-reason.event-wait{border-color:#e5b45d;background:#48371e}
 </style></head><body><main>
-<header class="head"><div><div class="eyebrow">Mission optimization / expected drops</div><h1 id="targetTitle">Crafting plan</h1><p>Understand launches, event bonuses, crafting, and remaining materials at a glance.</p></div><div><div class="tag" id="horizon"></div><div class="tag" id="launchLimit"></div><div class="tag" id="planStatus"></div></div></header>
-<section class="stats"><div class="stat"><div class="k">Total achievable target items</div><strong id="craftTotal">—</strong><small id="inventorySummary"></small></div><div class="stat"><div class="k">Total launches</div><strong id="launchTotal">—</strong><small id="boostTotal"></small></div><div class="stat"><div class="k">Fuel consumed</div><strong id="fuelTotal">—</strong><small>Combined four virtues, trillion units</small></div><div class="stat"><div class="k">Mission slots</div><strong id="slotTotal">—</strong><small id="eventTotal"></small></div></section>
+<header class="head"><div><div class="eyebrow">Mission optimization / expected drops</div><h1 id="targetTitle">Crafting plan</h1><p>Understand launches, event bonuses, crafting, and remaining materials at a glance.</p></div><div><div class="tag" id="horizon"></div><div class="tag" id="launchLimit"></div><div class="tag" id="planStatus"></div><div class="tag" id="fuelStatus"></div><div class="tag" id="completionStatus"></div><div class="tag" id="completionDay"></div></div></header>
+<section class="stats"><div class="stat"><div class="k">Total achievable target items</div><strong id="craftTotal">—</strong><small id="inventorySummary"></small></div><div class="stat"><div class="k">Total launches</div><strong id="launchTotal">—</strong><small id="boostTotal"></small></div><div class="stat"><div class="k">Allocated fuel</div><strong id="allocatedFuelTotal">—</strong><small id="fuelTotal"></small></div><div class="stat"><div class="k">Mission slots</div><strong id="slotTotal">—</strong><small id="eventTotal"></small></div></section>
 <div class="section"><div><h2>Recommended ships</h2><small>Grouped across all three slots and planning phases</small></div><div class="filters"><input id="search" placeholder="Filter ship names" aria-label="Filter ships"><select id="boostFilter" aria-label="Filter launches"><option value="all">All launches</option><option value="boost">Boosted only</option><option value="normal">Regular only</option></select></div></div>
-<div id="ships" class="shipgrid"></div>
+<div id="ships" class="shipgrid"></div><p class="note" id="zeroFuelNote"></p>
 <div class="section"><div><h2>Launch checklist</h2><small>Large clickable cells ordered by launch time within each slot. Click to mark done.</small></div><div class="filters"><span class="tag" id="doneCount">0 / 0 done</span><button class="button" id="jumpProgress" type="button">Jump to next launch ↗</button><select id="slotFilter" aria-label="Timeline slot"><option value="all">All slots</option></select><button class="button" id="exportProgress">Export progress</button><button class="button" id="importProgress">Import progress</button><input type="file" id="progressFile" accept="application/json,.json" hidden></div></div>
 <div class="panel timelinewrap"><div class="timeline-list" id="lanes"></div><div class="legend"><span><i class="swatch"></i>Normal</span><span><i class="swatch b"></i>2× capacity</span><span><i class="swatch done-swatch"></i>Done ✓</span><span><i class="swatch e"></i>Event</span><span><i class="swatch sleeping"></i>Sleep</span><span>◇ Explicit no-launch</span><span>○ Idle / waiting</span><span>✦ Possible event wait</span></div><p class="note">Cards show the correct launch order and start times, but widths are intentionally equal for readability (not proportional to mission duration). Missions may finish during sleep; only new launches are restricted. Completion is saved in this browser, and you can export/import your progress.</p></div>
 <div class="twocol"><div><div class="section"><h2>Fuel breakdown</h2><small>Combined across all launches</small></div><div class="panel" id="fuelPanel"></div></div><div><div class="section"><h2>Crafting quantities</h2><small>Intermediate materials and final products</small></div><div class="panel" id="craftPanel"></div></div></div>
@@ -95,6 +101,9 @@ const data=/*__DATA__*/;
 document.getElementById('launchLimit').textContent=data.metadata?.max_launches_per_hour ? `Launch limit: ${data.metadata.max_launches_per_hour} per slot per rolling hour` : 'Launch limit: unlimited';
 const optimization=data.metadata?.optimization;
 document.getElementById('planStatus').textContent=optimization ? (optimization.status===0?'Craft maximum proven':'Feasible plan; craft maximum unproven') : 'Legacy plan: proof status unavailable';
+const guarantees=optimization?.guarantees;
+document.getElementById('fuelStatus').textContent=guarantees?.allocated_fuel?.proven?'Minimum allocated fuel proven (fixed craft count)':'Minimum fuel unproven';
+document.getElementById('completionStatus').textContent=guarantees?.completion?.proven?'Minimum completion proven (fixed crafts/fuel)':'Minimum completion unproven';
 const targetId=data.metadata?.target||'metronome-4';
 const targetName=({'metronome-4':'Reggference Quantum Metronome','ankh-4':'Brilliant Tungsten Ankh'})[targetId]||targetId;
 document.title=targetName+' • Mission Plan';
@@ -124,7 +133,13 @@ document.getElementById('craftTotal').textContent=fmt(newlyCrafted+alreadyOwned,
 document.getElementById('inventorySummary').textContent=`${fmt(newlyCrafted,0)} newly crafted + ${fmt(alreadyOwned,0)} already owned (expected-drop model)`;
 document.getElementById('launchTotal').textContent=fmt(sched.length,0);
 document.getElementById('boostTotal').textContent=`${sched.filter(r=>r.event_bonus).length} event-boosted launches`;
-document.getElementById('fuelTotal').textContent=fmt(totalFuel,3)+'T';
+document.getElementById('fuelTotal').textContent='Consumed: '+fmt(totalFuel,3)+'T';
+document.getElementById('allocatedFuelTotal').textContent=data.summary?.allocated_fuel_T==null?'Unavailable':fmt(data.summary.allocated_fuel_T,3)+'T';
+document.getElementById('completionDay').textContent='Actual completion: day '+fmt((data.summary?.completion_hour??Math.max(0,...sched.map(r=>r.end_hour)))/24,3);
+if(guarantees?.crafts && !guarantees.crafts.proven){document.getElementById('planStatus').textContent=`Best feasible new crafts: ${fmt(guarantees.crafts.value,0)}; bound: ${guarantees.crafts.bound??'unknown'}; gap: ${guarantees.crafts.gap==null?'unknown':fmt(guarantees.crafts.gap*100,2)+'%'}`}
+const freeShips=new Set(data.metadata?.zero_fuel_ships||[]);
+const freeLaunches=plans.filter(r=>freeShips.has(r.ship)).reduce((sum,r)=>sum+r.launches,0);
+document.getElementById('zeroFuelNote').textContent=freeLaunches?`${freeLaunches} launches use explicit zero fuel in mission.csv. Fuel-first optimization can require more launches.`:'';
 document.getElementById('slotTotal').textContent=slots.length;
 document.getElementById('eventTotal').textContent=windows.length+' capacity event'+(windows.length===1?'':'s');
 let filter='all',search='',slot='all';
