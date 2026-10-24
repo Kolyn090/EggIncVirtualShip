@@ -17,6 +17,7 @@ NO_LAUNCH_WINDOWS=()
 INVENTORY_FILE="data/inventory.csv" # Empty string disables inventory
 OUTPUT_DIR="results" # Base directory; selected target is appended
 SOLVER_SECONDS=120
+VERBOSE_SOLVER=false # Enable HiGHS progress output
 OPEN_DASHBOARD=false # Set true to open on macOS after success
 # ===== END CONFIGURATION =====
 
@@ -49,6 +50,8 @@ if [[ -n "$INVENTORY_FILE" ]]; then ARGS+=(--inventory "$INVENTORY_FILE"); fi
 # Bash 3.2 with nounset requires the guarded expansion for empty arrays.
 for window in ${SLEEP_WINDOWS[@]+"${SLEEP_WINDOWS[@]}"}; do ARGS+=(--sleep "$window"); done
 for window in ${NO_LAUNCH_WINDOWS[@]+"${NO_LAUNCH_WINDOWS[@]}"}; do ARGS+=(--no-launch "$window"); done
+
+if [[ "$VERBOSE_SOLVER" == true ]]; then ARGS+=(--verbose-solver); fi
 
 # Repeated scalar options use argparse's last-value-wins behavior. Window
 # overrides are additive, matching the optimizer's repeatable arguments.
