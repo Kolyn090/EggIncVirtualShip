@@ -3,12 +3,12 @@ set -euo pipefail
 
 # ===== OPTIMIZER CONFIGURATION =====
 TARGET="metronome-4" # Any craftable material ID, e.g. ankh-4
-DAYS=60
+DAYS=30
 FUEL=500
 PARALLEL=3
 # Maximum launches within any rolling 60-minute window; 0 is unlimited
-MAX_LAUNCHES_PER_HOUR=3
-EVENTS=2
+MAX_LAUNCHES_PER_HOUR=2
+EVENTS=1
 EVENT_HOURS=48
 EVENT_MULTIPLIER=2
 FUEL_STEP=5
@@ -17,9 +17,9 @@ NO_LAUNCH_WINDOWS=()
 INVENTORY_FILE="data/inventory.csv" # Empty string disables inventory
 OUTPUT_DIR="results" # Base directory; selected target is appended
 SOLVER_SECONDS=120
-POLISH_SECONDS=10 # Additional budget for fuel and schedule quality
+POLISH_SECONDS=60 # Additional budget for fuel and schedule quality
 VERBOSE_SOLVER=false # Enable HiGHS progress output
-OPEN_DASHBOARD=false # Set true to open on macOS after success
+OPEN_DASHBOARD=true # Set true to open on macOS after success
 # ===== END CONFIGURATION =====
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
