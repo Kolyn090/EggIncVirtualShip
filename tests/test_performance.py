@@ -29,6 +29,7 @@ class PerformanceTests(unittest.TestCase):
 
     def test_feasible_time_limit_is_exported_not_labelled_optimal(self):
         def time_limited(*a,**kw):
+            kw.pop('incumbent',None)
             result=milp(*a,**kw)
             result.status=1;result.message='Time limit reached';result.mip_gap=.5
             return result
@@ -46,9 +47,11 @@ class PerformanceTests(unittest.TestCase):
         def fail_nonempty(*a,**kw):
             if kw.get('launch_cap')==0:return solve_timed_launches(*a,**kw)
             raise RuntimeError('No feasible solution returned: Time limit reached')
+        import pandas as pd
+        mission=pd.read_csv(self.base/'mission.csv');mission['duration']='15m';mission.to_csv(self.base/'mission.csv',index=False)
         args=Namespace(data_dir=str(self.base),expectations='ship_material_expectations.csv',ships=None,inventory=None,
                        days=1,events=0,event_hours=2,sleep=[],no_launch=[],parallel=3,event_multiplier=2,
-                       fuel=20,fuel_step=5,solver_seconds=2,max_launches_per_hour=2,output_dir=str(self.base/'refined'))
+                       fuel=20,fuel_step=5,solver_seconds=2,max_launches_per_hour=1,output_dir=str(self.base/'refined'))
         with patch('optimize_reggference.solve_timed_launches',side_effect=fail_nonempty),contextlib.redirect_stdout(io.StringIO()) as out:
             solve(args)
         self.assertIn('[Refine]',out.getvalue())

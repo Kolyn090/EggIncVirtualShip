@@ -39,11 +39,11 @@ python -m unittest discover -s tests -v
 
 ### Configurable runner and crafting targets
 
-On macOS (system Bash 3.2 or newer) or Linux, prepare Python 3 dependencies:
+On macOS (system Bash 3.2 or newer) or Linux, prepare Python 3.11+ dependencies:
 
 ```sh
 python3 -m venv .venv
-.venv/bin/python -m pip install numpy pandas scipy
+.venv/bin/python -m pip install -r requirements.txt
 ./run_optimizer.sh
 ```
 
@@ -140,7 +140,8 @@ available. `--verbose-solver` enables HiGHS' own progress log; the runner also
 has a `VERBOSE_SOLVER` switch. Stage timings and final status/gap are saved in
 `plan_metadata.json`.
 
-With a positive launch limit, a continuous relaxation of the aggregate model
+When mission durations and nonoverlap already imply the per-slot launch limit,
+the exact aggregate model is used directly. Otherwise a continuous relaxation of the aggregate model
 first supplies a craft upper bound. A second LP minimizes launch count at the
 rounded-down bound to propose a compact initial scheduling problem. These LP
 solutions are estimates, not valid schedules. The continuous-time scheduling
@@ -168,28 +169,32 @@ zero-launch, zero-new-craft fallback is exported. These are feasible fallbacks,
 not evidence of optimality or useful new production. Unknown gaps remain
 unavailable; no fabricated zero gap is reported.
 
-See [the benchmark report](benchmarks/REPORT.md) for measurements and remaining
+See [the updated solution-quality report](benchmarks/SOLUTION_QUALITY.md) and
+[the historical benchmark report](benchmarks/REPORT.md) for measurements and remaining
 performance limits. Tests include solver option forwarding, time-limit
 incumbent retention, fallback status, and failed-scheduling refinement.
 
 ### Schedule quality and timeline gaps
 
 Craft count remains the primary objective. After finding a feasible craft count,
-secondary solves fix it exactly and optimize, in order: allocated fuel, actual
-fuel consumed (a tie-break within allocation), last mission completion time,
-earlier launches/phases, and mission count. No weighted tradeoff can reduce
-crafts to improve timing. Lower priorities stop if an earlier priority cannot
-be proved optimal within its budget; the best feasible incumbent is retained.
+secondary solves fix it exactly and optimize allocated fuel, then last mission
+completion time, then earlier launches/phases and mission count. Consumed fuel
+is reported separately; it no longer takes priority over completion time. No
+weighted tradeoff can reduce crafts to improve timing. If a stage times out, its
+best feasible objective is locked and remaining time can improve lower
+priorities **conditionally**; the unproved minimum remains explicitly unproved.
 Use `--polish-seconds 10` (default) for the additional shared improvement budget,
 or `--polish-seconds 0` to disable these secondary stages.
 
-For rate-limited plans, secondary stages operate on the selected continuous-time
-model's launch cap. Their scope and status are recorded in
+When the individual-launch model is needed, secondary stages operate on its
+selected launch cap. Their scope and status are recorded in
 `optimization.secondary_stages` in `plan_metadata.json`; a local secondary
-optimum is not a claim of global fuel/timing optimality. Unlimited plans minimize
-completion time in the aggregate model and prefer earlier launch phases.
-A final timing LP compacts the fixed mission identities, phases, slots and per-slot
-launch order, minimizing completion and then total start times. It preserves
+optimum is not a claim of global fuel/timing optimality. Aggregate-model plans minimize completion time and prefer earlier launch phases.
+A final exact temporal solver fixes mission identities, event multipliers, slots
+and per-slot order, but allows **any** eligible awake phase of the same multiplier.
+Forward constraint propagation computes the componentwise earliest feasible
+launches. For these fixed decisions, induction proves minimum completion and
+total start time; it is not a proof over other mission types or orders. It preserves
 fuel, drops and crafts exactly and enforces slot overlap, event boundaries,
 blackouts and the per-slot rolling launch limit. Times are exported from the
 optimization; the dashboard never adjusts them. Primary craft proof status is
@@ -213,3 +218,36 @@ the optimizer additionally checks each ship's duration against mission data.
 
 See [the schedule investigation](benchmarks/SCHEDULE_QUALITY.md) for concrete
 before/after results and the distinction between necessary and arbitrary waits.
+
+
+### Stage guarantees, input costs and reproducibility
+
+Install `requirements.txt` to use pinned native HiGHS 1.12.0 (`highspy`), including
+feasible-incumbent warm starts. Without it the SciPy backend is still correct,
+but cannot warm-start MIPs and can be slower. The native backend uses one solver
+thread for reproducibility. A restricted-phase seed never provides a global
+craft bound; the subsequent full-model dual bound/proof does. Large full
+aggregate craft searches skip presolve after measured noninterruptible presolve
+overruns; seed and secondary searches retain presolve. All constraints stay in
+the model. Big-M values use actual phase/horizon bounds and interchangeable
+slots are symmetry-ordered by total launch count.
+
+The dashboard shows separate proof statuses for crafts, allocated fuel and
+completion, actual completion day, allocated fuel and consumed fuel. The
+`optimization.guarantees` metadata distinguishes global fixed-craft/fuel
+certificates from capped/fixed-order results. A craft incumbent is never called
+a maximum without proof. Zero allocation is a proven minimum for that fixed
+craft count because input costs and allocations are nonnegative.
+
+Blank, nonnumeric, negative and infinite ship fuel costs are rejected. Explicit
+zeros remain zero. The current input data includes genuinely zero-cost Heavy
+and BCR rows; a fuel-first plan may therefore require many free missions. Do
+not change those costs without evidence. Surplus intermediate crafts and any
+individually removable missions are eliminated only when the complete material
+balance stays feasible at the same target craft count. Remaining timestamps
+are not moved by this cleanup; the temporal model subsequently optimizes them.
+No filler missions are added and actual inventory files are never modified.
+
+Independent export validation recomputes material supply/consumption and fuel
+from actual missions, in addition to validating durations, slot overlap,
+per-slot rolling limits, event eligibility, sleep windows and the horizon.
