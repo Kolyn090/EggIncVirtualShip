@@ -3,14 +3,14 @@ set -euo pipefail
 
 # ===== OPTIMIZER CONFIGURATION =====
 TARGET="metronome-4" # Any craftable material ID, e.g. ankh-4
-DAYS=26
+DAYS=70
 FUEL=500
 PARALLEL=3
-EVENTS=1
+EVENTS=2
 EVENT_HOURS=48
 EVENT_MULTIPLIER=2
 FUEL_STEP=5
-SLEEP_WINDOWS=("23:00-08:00")
+SLEEP_WINDOWS=("00:00-11:00")
 NO_LAUNCH_WINDOWS=()
 INVENTORY_FILE="data/inventory.csv" # Empty string disables inventory
 OUTPUT_DIR="results" # Base directory; selected target is appended
