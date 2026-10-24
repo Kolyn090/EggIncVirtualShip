@@ -95,19 +95,24 @@ drop rows remain usable, so ankh plans can still be feasible.
 
 ```sh
 ./run_optimizer.sh --max-launches-per-hour 2
+./run_optimizer.sh --max-launches-per-hour 1 --parallel 3
 .venv/bin/python optimize_reggference.py --max-launches-per-hour 2 --days 3
 ./run_optimizer.sh --max-launches-per-hour 0
 ```
 
 The Python CLI defaults to `0` (unlimited, preserving the original model).
 The runner configuration defaults to `MAX_LAUNCHES_PER_HOUR=2`. Only launches
-count, across all slots combined; returns do not count. Windows are half-open:
+count, independently in each ship slot; returns do not count. With limit 1
+and three slots, three simultaneous launches are allowed, one per slot. Windows are half-open:
 launches at 08:00 and 09:00 are exactly an hour apart and can reuse capacity.
 The limit is rolling, including across wake-up and event boundaries.
 
 A positive limit uses an individual-launch, continuous-time MILP. It jointly
 chooses launch times, ships, slots, and event phases, alongside crafting and
-fuel allocation. Sorted launch times satisfy `t[i + limit] >= t[i] + 1 hour`.
+fuel allocation. Each slot tracks its own previous launches: its next launch must be at least
+one hour after its `limit`-th preceding launch. Launches in other slots do not
+consume its allowance. The model skips redundant rate rows when mission
+durations and nonoverlap already guarantee the limit.
 Slot-ready times prevent overlapping missions. Exported times come directly
 from the solver, without shifting or rounding; an independent validator checks
 the rolling rule and slot overlap before export (numerical tolerance 1e-7 hours).
@@ -183,10 +188,10 @@ model's launch cap. Their scope and status are recorded in
 `optimization.secondary_stages` in `plan_metadata.json`; a local secondary
 optimum is not a claim of global fuel/timing optimality. Unlimited plans minimize
 completion time in the aggregate model and prefer earlier launch phases.
-A final timing LP compacts the fixed mission identities, phases, slots and global
+A final timing LP compacts the fixed mission identities, phases, slots and per-slot
 launch order, minimizing completion and then total start times. It preserves
 fuel, drops and crafts exactly and enforces slot overlap, event boundaries,
-blackouts and the global rolling launch limit. Times are exported from the
+blackouts and the per-slot rolling launch limit. Times are exported from the
 optimization; the dashboard never adjusts them. Primary craft proof status is
 reported separately from these secondary subproblems, including time limits.
 

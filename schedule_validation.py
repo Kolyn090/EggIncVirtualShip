@@ -5,7 +5,7 @@ TOLERANCE=1e-7
 
 
 def validate_launch_rate(times, limit, tolerance=TOLERANCE):
-    """Validate all half-open rolling intervals [t, t + 1 hour)."""
+    """Validate one slot's half-open rolling intervals [t, t + 1 hour)."""
     if limit<0 or int(limit)!=limit:
         raise ValueError('Maximum launches per hour must be a nonnegative integer')
     ordered=sorted(float(t) for t in times)
@@ -16,7 +16,8 @@ def validate_launch_rate(times, limit, tolerance=TOLERANCE):
 
 
 def validate_schedule(rows, limit=0, horizon=None, durations=None, max_slots=None, event_windows=None, blackouts=()):
-    launches=[];lanes={}
+    lanes={}
+    validate_launch_rate([],limit)
     for row in rows:
         start=float(row['start_hour']);end=float(row['end_hour']);slot=int(row['slot'])
         if not (math.isfinite(start) and math.isfinite(end)) or start<-TOLERANCE or end<start-TOLERANCE:
@@ -31,9 +32,9 @@ def validate_schedule(rows, limit=0, horizon=None, durations=None, max_slots=Non
             eligible=next((boost for a,b,boost in event_windows if a-TOLERANCE<=start<b-TOLERANCE),None)
             boost=str(row['event_bonus']).lower()=='true'
             if eligible is None or boost!=eligible:raise ValueError('Mission event eligibility does not match actual launch time')
-        launches.append(start);lanes.setdefault(slot,[]).append((start,end))
-    validate_launch_rate(launches,limit)
+        lanes.setdefault(slot,[]).append((start,end))
     for lane in lanes.values():
         lane.sort()
+        validate_launch_rate([start for start,end in lane],limit)
         if any(start<previous_end-TOLERANCE for (_,previous_end),(start,_) in zip(lane,lane[1:])):
             raise ValueError('Schedule contains overlapping missions in one slot')

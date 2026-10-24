@@ -1,5 +1,10 @@
 # Schedule-gap investigation and validation
 
+> Historical report: measurements below used the former global launch-rate
+> semantics. Current `--max-launches-per-hour` is independent per ship slot;
+> the cross-slot staggering described below no longer applies.
+
+
 The exact CSV behind the quoted 404.6-hour example was not supplied. Existing
 local exports, model constraints and representative controlled cases were
 inspected instead. The example was also covered by a 404.6-hour gap-partition test.
