@@ -119,3 +119,50 @@ to reduce model size when necessary. A time limit can leave an uncertified
 feasible solution or no solution; the optimizer reports either explicitly.
 No launches is normally feasible, even if no new target can be crafted.
 The existing one-second guard before event/sleep phase ends is retained.
+
+### Solver progress and performance
+
+```sh
+./run_optimizer.sh --verbose-solver --solver-seconds 120
+.venv/bin/python optimize_reggference.py --days 26 --max-launches-per-hour 2 --verbose-solver
+.venv/bin/python benchmarks/benchmark_optimizer.py --label current
+```
+
+Progress is flushed immediately: before construction, before each solve, and
+when each solve returns. Output includes model size, construction time, actual
+solver runtime, solver status, best feasible objective, bound, and gap when
+available. `--verbose-solver` enables HiGHS' own progress log; the runner also
+has a `VERBOSE_SOLVER` switch. Stage timings and final status/gap are saved in
+`plan_metadata.json`.
+
+With a positive launch limit, a continuous relaxation of the aggregate model
+first supplies a craft upper bound. A second LP minimizes launch count at the
+rounded-down bound to propose a compact initial scheduling problem. These LP
+solutions are estimates, not valid schedules. The continuous-time scheduling
+MILP then jointly chooses ships, phases, slots, and exact launch times. Ship
+selection depends only on event multiplier, with separate phase selection,
+avoiding a binary variable for every ship/phase combination. If the candidate
+cannot reach the upper bound, the launch capacity is expanded toward the full
+safe bound while budget remains. Timed-out attempts never exclude a plan.
+Only a feasible schedule attaining a proven bound (or a full-model proof) is
+reported as globally optimal. A launch-capped subproblem's local optimum is
+explicitly distinguished from a global proof.
+
+`--solver-seconds` is passed as HiGHS' `time_limit`. Rate-limited runs share a
+budget across stages; each call receives only its allocated remaining time.
+The budget excludes initial input/aggregate construction. HiGHS may overrun
+its limit in presolve or other noninterruptible operations, and Python model
+construction also takes time; this is not a hard process deadline.
+The benchmark runner uses a separate wall-clock cutoff and unique output
+folders, recording timeouts without reading stale output files.
+
+Feasible incumbents are retained when a later solve times out. An inventory-only
+seed supplies a valid no-launch plan when scheduling finds nothing better. If
+an unlimited solve finds no incumbent at its limit, an explicitly labelled
+zero-launch, zero-new-craft fallback is exported. These are feasible fallbacks,
+not evidence of optimality or useful new production. Unknown gaps remain
+unavailable; no fabricated zero gap is reported.
+
+See [the benchmark report](benchmarks/REPORT.md) for measurements and remaining
+performance limits. Tests include solver option forwarding, time-limit
+incumbent retention, fallback status, and failed-scheduling refinement.
