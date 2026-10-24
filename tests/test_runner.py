@@ -27,6 +27,7 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(data['cwd'],str(root))
             self.assertEqual(args[0],str(root/'optimize_reggference.py'))
             self.assertEqual(args[args.index('--output-dir')+1],'results/ankh-4')
+            self.assertEqual(args[args.index('--mode')+1],'max-crafts')
             self.assertEqual(args[args.index('--max-total-launches')+1],'40')
             self.assertEqual(args[args.index('--max-launches-per-day')+1],'0')
             self.assertEqual(args.count('--sleep'),2)
@@ -37,8 +38,9 @@ class RunnerTests(unittest.TestCase):
             configured=subprocess.run(['bash',str(root/'run_optimizer.sh')],cwd='/tmp',capture_output=True,text=True)
             configured_args=json.loads(configured.stdout)['args']
             self.assertEqual(configured_args[configured_args.index('--target')+1],'ankh-4')
-            override=subprocess.run(command+['--max-total-launches','20','--max-launches-per-day','3'],cwd='/tmp',text=True,capture_output=True)
+            override=subprocess.run(command+['--mode','balanced','--max-total-launches','20','--max-launches-per-day','3'],cwd='/tmp',text=True,capture_output=True)
             passed=json.loads(override.stdout)['args']
+            self.assertEqual(passed[-6:-4],['--mode','balanced'])
             self.assertEqual(passed[-4:],['--max-total-launches','20','--max-launches-per-day','3'])
             failed=subprocess.run(command,env=dict(os.environ,RUNNER_TEST_EXIT='7'),capture_output=True)
             self.assertEqual(failed.returncode,7)

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 # ===== OPTIMIZER CONFIGURATION =====
+OPTIMIZATION_MODE="max-crafts" # balanced retains launch/fuel/completion priorities
 TARGET="ankh-4" # Any craftable material ID, e.g. ankh-4, metronome-4
 DAYS=30
 FUEL=500
@@ -45,7 +46,7 @@ for ((i=0; i<${#OVERRIDES[@]}; i++)); do
     --target=*) EFFECTIVE_TARGET="${OVERRIDES[$i]#--target=}" ;;
   esac
 done
-ARGS=(--target "$TARGET" --days "$DAYS" --fuel "$FUEL" --parallel "$PARALLEL"
+ARGS=(--mode "$OPTIMIZATION_MODE" --target "$TARGET" --days "$DAYS" --fuel "$FUEL" --parallel "$PARALLEL"
       --events "$EVENTS" --event-hours "$EVENT_HOURS" --event-multiplier "$EVENT_MULTIPLIER"
       --max-launches-per-hour "$MAX_LAUNCHES_PER_HOUR" --max-total-launches "$MAX_TOTAL_LAUNCHES" --max-launches-per-day "$MAX_LAUNCHES_PER_DAY" --fuel-step "$FUEL_STEP" --output-dir "$OUTPUT_DIR/$EFFECTIVE_TARGET"
       --solver-seconds "$SOLVER_SECONDS" --polish-seconds "$POLISH_SECONDS")

@@ -14,13 +14,19 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from scipy.optimize import Bounds, LinearConstraint, OptimizeResult
-from solver_backend import milp, backend_name
+from solver_backend import milp, backend_name, feasible_vector
 from mission_profiles import load_recipes,expand_profiles,prune_dominated_options
 from scipy.sparse import coo_matrix
 from schedule_validation import validate_launch_rate, validate_schedule
 
 FUELS=('curiousity','kindness','resilence','integrity')
 TARGET='metronome-4'
+
+
+class NoFeasibleSchedule(RuntimeError):
+    def __init__(self,result,cap,full_cap):
+        super().__init__('No feasible solution returned: '+result.message)
+        self.result=result;self.launch_cap=cap;self.full_launch_bound=full_cap
 
 def load_inventory(path, known_materials):
     """Read actual, whole-item counts separately from probabilistic drops."""
@@ -143,8 +149,8 @@ def service_thresholds(hours):
     return sorted({values[0],values[len(values)//2],values[-1]})
 
 
-def resource_upper_bound(args,available,hours,fuel,phases,mats,groups,outputs,inventory,rate,target,seconds):
-    """Small valid LP relaxation, with no slot binaries or Big-M constraints.
+def resource_upper_bound(args,available,hours,fuel,phases,mats,groups,outputs,inventory,rate,target,seconds,integer=False):
+    """Small valid resource relaxation, with no slot binaries or Big-M constraints.
 
     Counts aggregate by event multiplier. Service-window union bounds follow
     from nonoverlap in real schedules. Relaxing order/slot/day details only
@@ -181,9 +187,13 @@ def resource_upper_bound(args,available,hours,fuel,phases,mats,groups,outputs,in
         row=np.zeros(n);row[:len(choices)]=1;rows.append(row);upper.append(min(cap for cap in caps if cap))
     objective=np.zeros(n);goal=next(rid for rid,_ in groups if outputs[rid]==target);objective[recipe_cols[goal]]=-1
     if hasattr(args,'construction_totals'):args.construction_totals.append(time.monotonic()-started)
-    return run_milp(args,objective,label='Craft upper bound (resource LP)',seconds=seconds,
-                    integrality=np.zeros(n),bounds=Bounds(np.zeros(n),np.full(n,np.inf)),
+    result=run_milp(args,objective,label='Craft upper bound (integer resources)' if integer else 'Craft upper bound (resource LP)',seconds=seconds,
+                    integrality=np.ones(n) if integer else np.zeros(n),bounds=Bounds(np.zeros(n),np.full(n,np.inf)),
                     constraints=LinearConstraint(np.asarray(rows),-np.inf,upper))
+    result.resource_choices=choices
+    result.resource_recipe_cols=recipe_cols
+    result.resource_blocks=blocks
+    return result
 
 
 def finite_or_none(value):
@@ -316,7 +326,7 @@ def compact_fixed_schedule(args, schedule, phases):
                    for name,value in [('fixed-plan completion time',completion),('fixed-plan earlier launches',earlier)]]
 
 
-def solve_timed_launches(args, available, hours, fuel, phases, mats, groups, outputs, inventory, rate, target, launch_cap=None, target_upper=None):
+def solve_timed_launches(args, available, hours, fuel, phases, mats, groups, outputs, inventory, rate, target, launch_cap=None, target_upper=None, minimum_crafts=0, starting_plan=None):
     """Continuous-time MILP with globally ordered, optional individual launches.
 
     Each slot tracks the last L launch times; its next launch must be at
@@ -453,6 +463,7 @@ def solve_timed_launches(args, available, hours, fuel, phases, mats, groups, out
     objective=np.zeros(len(lower))
     goal=next(rid for rid,_ in groups if outputs[rid]==target)
     objective[crafts[goal]]=-1
+    lower[crafts[goal]]=minimum_crafts
     if target_upper is not None:upper[crafts[goal]]=target_upper
     matrix=coo_matrix((values,(ri,ci)),shape=(len(lbs),len(lower))).tocsr()
     args.model_construction_seconds=getattr(args,'model_construction_seconds',0.)+time.monotonic()-construction_started
@@ -461,16 +472,32 @@ def solve_timed_launches(args, available, hours, fuel, phases, mats, groups, out
           f'{len(lower)} variables ({sum(integer)} integer), {len(lbs)} constraints, {matrix.nnz} nonzeros',flush=True)
     if launch_cap is not None and nlaunch<safe_cap:
         print('[Schedule] Solving a launch-capped subproblem; its local optimum is not a global proof',flush=True)
-    result=run_milp(args,objective,label='Schedule',integrality=np.array(integer),bounds=Bounds(lower,upper),
-                constraints=LinearConstraint(matrix,lbs,ubs))
+    warm=None
+    if starting_plan is not None and len(starting_plan[0])<=nlaunch:
+        warm=np.zeros(len(lower));known=sorted(starting_plan[0],key=lambda r:(r[4],r[0]))
+        ready_values=np.zeros(args.parallel);queue=np.zeros((args.parallel,limit)) if history is not None else None
+        last_start=0.
+        for i in range(nlaunch):
+            if i<len(known):
+                slot,p,ship,boost,t,end=known[i];j=available.index(ship);last_start=t
+                warm[choices_by_launch[i][(boost,j)]]=1;warm[phase_choices[i][p-1]]=1;warm[slots[i][slot-1]]=1
+                warm[active_times[i]]=t;ready_values[slot-1]=end
+                if queue is not None:queue[slot-1]=np.r_[t+1,queue[slot-1,:-1]]
+            warm[times[i]]=last_start;warm[ready[i]]=ready_values
+            if queue is not None:
+                for slot in range(args.parallel):warm[history[i][slot]]=queue[slot]
+        for rid,value in starting_plan[1].items():warm[crafts[rid]]=value
+        warm[blocks]=starting_plan[2];warm[makespan]=max((r[5] for r in known),default=0.)
+    result=run_milp(args,objective,label=f'Schedule >= {minimum_crafts}' if minimum_crafts else 'Schedule',integrality=np.array(integer),bounds=Bounds(lower,upper),
+                constraints=LinearConstraint(matrix,lbs,ubs),incumbent=warm)
     result.full_launch_bound=safe_cap
     result.launch_cap=nlaunch
     if result.x is None:
-        if nlaunch==0 and getattr(result,'status',None)==1:
+        if nlaunch==0 and minimum_crafts==0 and getattr(result,'status',None)==1:
             result.x=np.zeros(len(lower));result.fun=0.0
             result.message='Time limit; explicit zero-launch seed (zero new crafts)'
         else:
-            raise RuntimeError('No feasible solution returned: '+result.message)
+            raise NoFeasibleSchedule(result,nlaunch,safe_cap)
     x=result.x
     discrete=np.array(integer,dtype=bool)
     if (np.abs(x[discrete]-np.rint(x[discrete]))>1e-4).any():
@@ -507,6 +534,9 @@ def solve_timed_launches(args, available, hours, fuel, phases, mats, groups, out
         return extract(improved)
     result.polish_schedule=polish
     schedule,craft_counts,fuel_blocks=extract(x)
+    validate_timed(x)
+    validate_resources(schedule,craft_counts,groups,outputs,inventory,rate,args.event_multiplier,available,fuel,
+                       np.asarray(fuel_blocks)*args.fuel_step,args.fuel_step,args.fuel)
     return result,schedule,craft_counts,fuel_blocks
 
 
@@ -594,7 +624,8 @@ def solve(args):
     model_started=time.monotonic()
     args.optimization_started=model_started
     args.solver_deadline=model_started+args.solver_seconds
-    args.overall_deadline=args.solver_deadline+getattr(args,'polish_seconds',10.)
+    args.mode=getattr(args,'mode','balanced')
+    args.overall_deadline=args.solver_deadline+(getattr(args,'polish_seconds',10.) if args.mode=='balanced' else 0.)
     args.model_construction_seconds=0.
     args.construction_totals=[]
     args.solver_runs=[]
@@ -791,12 +822,42 @@ def solve(args):
     initial_construction_seconds=args.model_construction_seconds
     args.initial_construction_seconds=initial_construction_seconds
     primary_started=time.monotonic()
+    def validate_aggregate(proposal):
+        if not feasible_vector(proposal,c=obj,integrality=integrality,bounds=Bounds(low,up),constraints=constraints):
+            raise ValueError('Candidate violates the original aggregate model')
+        witness=[]
+        for slot in range(slots):
+            ready=0.
+            for p,(a,b,boost) in enumerate(phases):
+                counts=[int(round(proposal[count(slot,p,j)])) for j in range(ns)]
+                last_j=next((j for j in range(ns) if proposal[last(slot,p,j)]>.5),None)
+                ready=max(ready,a,float(proposal[start(slot,p)]))
+                order=[j for j,num in enumerate(counts) for _ in range(num-(j==last_j))]
+                if last_j is not None:order.append(last_j)
+                for j in order:
+                    witness.append((slot+1,p+1,available[j],boost,ready,ready+hours[j]));ready+=hours[j]
+        records=[dict(zip(['slot','phase','ship','event_bonus','start_hour','end_hour'],r)) for r in witness]
+        validate_schedule(records,launch_limit,H,dict(zip(available,hours)),slots,event_phases,sleeps,
+                          max_total_launches=total_cap,max_launches_per_day=daily_cap)
+        crafts={rid:int(round(proposal[ridcol[rid]])) for rid,_ in groups}
+        allocation=np.array([round(proposal[block(k)])*args.fuel_step for k in range(len(FUELS))])
+        validate_resources(witness,crafts,groups,outputs,inventory,rate,args.event_multiplier,available,fuel,allocation,args.fuel_step,args.fuel)
+        return witness
+
+    supplied_plan=None
+    if getattr(args,'incumbent_plan',None):
+        from incumbent_plan import load_plan
+        supplied_plan=load_plan(args.incumbent_plan,mission=mission,available=available,hours=hours,phases=phases,
+                                event_phases=event_phases,sleeps=sleeps,args=args,groups=groups,outputs=outputs,
+                                validate_resources=validate_resources,inventory=inventory,rate=rate,fuel=fuel)
+        print(f'[Incumbent] Revalidated {supplied_plan[1][goal_rid]} crafts from {args.incumbent_plan}',flush=True)
+
     if needs_timed:
         # The resource model is a relaxation of the complete scheduling
         # problem. Its dual bound bounds crafts, NEVER proves a schedule valid.
         solve_started=time.monotonic()
         relaxation=resource_upper_bound(args,available,hours,fuel,phases,mats,groups,outputs,inventory,rate,target,
-                                         seconds=min(2.,args.solver_seconds*.2))
+                                         seconds=min(8.,args.solver_seconds*.2),integer=args.mode=='max-crafts')
         bound=getattr(relaxation,'mip_dual_bound',None)
         if relaxation.status==0:bound=relaxation.fun
         target_upper=int(np.floor(-bound+1e-6)) if bound is not None and np.isfinite(bound) else None
@@ -806,8 +867,17 @@ def solve(args):
         seed_args.solver_deadline=args.solver_deadline
         seed=solve_timed_launches(seed_args,available,hours,fuel,phases,mats,groups,outputs,inventory,rate,target,launch_cap=0,target_upper=target_upper)
         best=seed
+        if supplied_plan is not None and supplied_plan[1][goal_rid]>best[2][goal_rid]:
+            retained=OptimizeResult(status=1,message='Retained revalidated incumbent; maximum unproven',mip_gap=None,
+                                   launch_cap=len(supplied_plan[0]),full_launch_bound=seed[0].full_launch_bound)
+            best=(retained,*supplied_plan)
         cap=total_cap if 0<total_cap<=60 else (min(initial_cap,32) if initial_cap is not None else 32)
+        timed_search=[]
         while True:
+            if target_upper is not None and best[2][goal_rid]>=target_upper:
+                if best[2][goal_rid]>target_upper:raise RuntimeError('Resource upper bound contradicts a validated incumbent')
+                best[0].status=0;best[0].message='Optimal: valid schedule attains proven resource upper bound';best[0].mip_gap=0.
+                break
             remaining=args.solver_deadline-time.monotonic()
             if remaining<=0:break
             stage_args=copy(args)
@@ -815,14 +885,26 @@ def solve(args):
             # Reserve time for refinement if a launch-capped model cannot
             # attain the proven upper bound. Unfinished solves are NOT cuts.
             stage_args.solver_seconds=max(.001,remaining*0.65 if cap is not None else remaining)
+            minimum=best[2][goal_rid]+1 if args.mode=='max-crafts' else 0
+            if cap is not None:cap=max(cap,len(best[1]))
+            if args.mode=='max-crafts':print(f'[Max Crafts] Testing >= {minimum}: continuous-time scheduling, cap {cap}',flush=True)
             try:
                 candidate=solve_timed_launches(stage_args,available,hours,fuel,phases,mats,groups,outputs,
-                                               inventory,rate,target,launch_cap=cap,target_upper=target_upper)
+                                               inventory,rate,target,launch_cap=cap,target_upper=target_upper,minimum_crafts=minimum,starting_plan=best[1:])
             except RuntimeError as exc:
                 if not str(exc).startswith('No feasible solution returned:'):raise
                 print(f'[Refine] {exc}; expanding launch capacity',flush=True)
                 candidate=None
+                full_infeasible=(isinstance(exc,NoFeasibleSchedule) and exc.result.status==2 and exc.launch_cap==exc.full_launch_bound)
+                if args.mode=='max-crafts':
+                    timed_search.append({'threshold':minimum,'scope':'full model' if isinstance(exc,NoFeasibleSchedule) and exc.launch_cap==exc.full_launch_bound else 'restricted launch cap',
+                                         'status':'proven_infeasible' if full_infeasible else 'unknown'})
+                    if full_infeasible:
+                        target_upper=minimum-1 if target_upper is None else min(target_upper,minimum-1)
+                        best[0].status=0;best[0].message='Craft maximum proven by infeasible higher-count full model';best[0].mip_gap=0.
+                        break
             if candidate is not None:
+                if args.mode=='max-crafts':timed_search.append({'threshold':minimum,'scope':'full model' if candidate[0].launch_cap==candidate[0].full_launch_bound else 'restricted launch cap','status':'feasible','best_feasible':candidate[2][goal_rid]})
                 if best is None or candidate[2][goal_rid]>best[2][goal_rid]:best=candidate
                 candidate_result=candidate[0]
                 if target_upper is not None and best[2][goal_rid]>=target_upper:
@@ -848,6 +930,7 @@ def solve(args):
             print(f'[Refine] Retrying with launch cap {cap if cap is not None else "full"}',flush=True)
         if best is None:raise RuntimeError('No feasible timed schedule found within solver budget; no plan exported')
         result,schedule,craft_counts,fuel_blocks=best
+        if args.mode=='max-crafts':result.craft_search=timed_search
         achieved=craft_counts[goal_rid]
         if not (target_upper is not None and achieved>=target_upper):
             if result['launch_cap']<result['full_launch_bound']:
@@ -861,7 +944,7 @@ def solve(args):
               f'feasible crafts {achieved}; upper bound {target_upper}; gap {getattr(result,"mip_gap",None)}; {result.message}',flush=True)
         args.primary_optimization_seconds=max(0.,time.monotonic()-primary_started-sum(args.construction_totals))
         args.polish_deadline=args.overall_deadline
-        if hasattr(result,'polish_schedule'):
+        if args.mode=='balanced' and hasattr(result,'polish_schedule'):
             schedule,craft_counts,fuel_blocks=result.polish_schedule(args.polish_deadline)
         x=np.zeros(n)
         for slot,p,ship,boost,t,end in schedule:
@@ -882,6 +965,25 @@ def solve(args):
         zero=np.zeros(n)
         for slot in range(slots):
             for p,(a,b,boost) in enumerate(phases):zero[start(slot,p)]=a
+        supplied_vector=None
+        if supplied_plan is not None:
+            supplied_vector=zero.copy();last_rows={}
+            for row in supplied_plan[0]:
+                slot,p,ship,boost,t,end=row;j=available.index(ship)
+                supplied_vector[count(slot-1,p-1,j)]+=1
+                last_rows[(slot-1,p-1)]=row
+            for slot in range(slots):
+                ready=0.
+                for p,(a,b,boost) in enumerate(phases):
+                    rows_here=[r for r in supplied_plan[0] if r[0]==slot+1 and r[1]==p+1]
+                    begin=max(ready,a,min((r[4] for r in rows_here),default=a))
+                    supplied_vector[start(slot,p)]=begin
+                    ready=begin+sum(r[5]-r[4] for r in rows_here)
+                    if rows_here:supplied_vector[last(slot,p,available.index(last_rows[(slot,p)][2]))]=1
+            for rid,value in supplied_plan[1].items():supplied_vector[ridcol[rid]]=value
+            for k,value in enumerate(supplied_plan[2]):supplied_vector[block(k)]=value
+            supplied_vector[makespan]=max((r[5] for r in supplied_plan[0]),default=0.)
+            validate_aggregate(supplied_vector)
         seed_up=up.copy()
         # A small source-grounded restriction supplies an incumbent quickly;
         # it NEVER supplies a global bound or removes full-model choices.
@@ -904,27 +1006,41 @@ def solve(args):
         seed=run_milp(args,obj,label='Stage 1 seed (restricted phases)',seconds=min(4.,args.solver_seconds*.3),
                       integrality=integrality,bounds=Bounds(low,seed_up),constraints=constraints,incumbent=zero)
         incumbent=seed.x if seed.x is not None else zero
-        global_lp_bound=None
-        remaining=args.solver_deadline-time.monotonic()
-        if ns>20 and remaining>1:
-            relaxation=resource_upper_bound(args,available,hours,fuel,phases,mats,groups,outputs,inventory,rate,target,
-                                             seconds=min(2.,remaining*.12))
-            if relaxation.status==0:global_lp_bound=relaxation.fun
-        result=run_milp(args,obj,label='Stage 1 crafts (full model)',seconds=args.solver_deadline-time.monotonic(),
-                        integrality=integrality,bounds=Bounds(low,up),constraints=constraints,incumbent=incumbent)
-        if global_lp_bound is not None:
-            dual=getattr(result,'mip_dual_bound',None)
-            result.mip_dual_bound=max(global_lp_bound,dual) if dual is not None and np.isfinite(dual) else global_lp_bound
-            if result.fun is not None:
-                result.mip_gap=max(0.,(result.fun-result.mip_dual_bound)/abs(result.fun)) if result.fun else (0. if result.mip_dual_bound==0 else None)
-        if result.status in [2,3,4]:raise RuntimeError('Full model failed: '+result.message)
-        if result.x is None or float(obj@incumbent)<result.fun-1e-7:
-            if result.x is not None and result.status==0:raise RuntimeError('Full solver optimum contradicts known feasible incumbent')
-            result.x=incumbent.copy();result.fun=float(obj@incumbent)
-            result.status=1
-            result.message=('Time limit; explicit zero-launch fallback retained; global optimality unproven' if incumbent[:count_size].sum()==0 and incumbent[ridcol[goal_rid]]==0 else 'Time limit; retained feasible seed incumbent, global optimality unproven')
-            dual=getattr(result,'mip_dual_bound',None)
-            result.mip_gap=((-dual+result.fun)/abs(result.fun) if result.fun else (0. if dual==0 else None)) if dual is not None and np.isfinite(dual) else None
+        if supplied_vector is not None and obj@supplied_vector<obj@incumbent:incumbent=supplied_vector.copy()
+        if args.mode=='max-crafts':
+            from max_crafts_search import search
+            remaining=max(0.,args.solver_deadline-time.monotonic())
+            resource=resource_upper_bound(args,available,hours,fuel,phases,mats,groups,outputs,inventory,rate,target,
+                                         seconds=min(12.,remaining*.2),integer=True)
+            option_columns=[np.array([col for slot in range(slots) for p in range(np_) for col in [count(slot,p,j),last(slot,p,j)]]) for j in range(ns)]
+            ingredient_rates=[]
+            for material in sorted(consumed_materials):
+                values=np.array([rate.get((ship,material),0) for ship in available])
+                ingredient_rates.append((values,values/hours))
+            result=search(args,obj,A.tocsr(),np.asarray(lbs),np.asarray(ubs),low,up,integrality,ridcol[goal_rid],incumbent,
+                          resource,option_columns,ingredient_rates,validate_aggregate,run_milp)
+        else:
+            global_lp_bound=None
+            remaining=args.solver_deadline-time.monotonic()
+            if ns>20 and remaining>1:
+                relaxation=resource_upper_bound(args,available,hours,fuel,phases,mats,groups,outputs,inventory,rate,target,
+                                                 seconds=min(2.,remaining*.12))
+                if relaxation.status==0:global_lp_bound=relaxation.fun
+            result=run_milp(args,obj,label='Stage 1 crafts (full model)',seconds=args.solver_deadline-time.monotonic(),
+                            integrality=integrality,bounds=Bounds(low,up),constraints=constraints,incumbent=incumbent)
+            if global_lp_bound is not None:
+                dual=getattr(result,'mip_dual_bound',None)
+                result.mip_dual_bound=max(global_lp_bound,dual) if dual is not None and np.isfinite(dual) else global_lp_bound
+                if result.fun is not None:
+                    result.mip_gap=max(0.,(result.fun-result.mip_dual_bound)/abs(result.fun)) if result.fun else (0. if result.mip_dual_bound==0 else None)
+            if result.status in [2,3,4]:raise RuntimeError('Full model failed: '+result.message)
+            if result.x is None or float(obj@incumbent)<result.fun-1e-7:
+                if result.x is not None and result.status==0:raise RuntimeError('Full solver optimum contradicts known feasible incumbent')
+                result.x=incumbent.copy();result.fun=float(obj@incumbent)
+                result.status=1
+                result.message=('Time limit; explicit zero-launch fallback retained; global optimality unproven' if incumbent[:count_size].sum()==0 and incumbent[ridcol[goal_rid]]==0 else 'Time limit; retained feasible seed incumbent, global optimality unproven')
+                dual=getattr(result,'mip_dual_bound',None)
+                result.mip_gap=((-dual+result.fun)/abs(result.fun) if result.fun else (0. if dual==0 else None)) if dual is not None and np.isfinite(dual) else None
 
         allocation=np.zeros(n)
         for k in range(len(FUELS)):allocation[block(k)]=args.fuel_step
@@ -936,9 +1052,11 @@ def solve(args):
         completion=np.zeros(n);completion[makespan]=1
         args.primary_optimization_seconds=max(0.,time.monotonic()-primary_started-sum(args.construction_totals))
         args.polish_deadline=args.overall_deadline
-        x,secondary_stages=polish_model(args,result.x,A.tocsr(),np.array(lbs),np.array(ubs),low,up,integrality,ridcol[goal_rid],
-                 [('launch count',mission_count),('fuel allocation',allocation),('mission completion time',completion),
-                  ('earlier launch phases',earlier)],'exact aggregate model')
+        if args.mode=='max-crafts':x=result.x.copy();secondary_stages=[]
+        else:
+            x,secondary_stages=polish_model(args,result.x,A.tocsr(),np.array(lbs),np.array(ubs),low,up,integrality,ridcol[goal_rid],
+                     [('launch count',mission_count),('fuel allocation',allocation),('mission completion time',completion),
+                      ('earlier launch phases',earlier)],'exact aggregate model')
         result.secondary_stages=secondary_stages
         if np.max(np.abs(x[:count_size+last_size]-np.rint(x[:count_size+last_size])))>1e-4:
             raise RuntimeError('Nonintegral solution returned')
@@ -967,6 +1085,7 @@ def solve(args):
         print(f'[Cleanup] Removed {removed_missions} surplus missions and {removed_crafts} surplus intermediate crafts; target count unchanged',flush=True)
     schedule,timing_stages=compact_fixed_schedule(args,schedule,phases)
     result.secondary_stages=getattr(result,'secondary_stages',[])+timing_stages
+    args.optimization_elapsed_seconds=time.monotonic()-args.optimization_started
     x[:count_size]=0
     for slot,p,ship,boost,t,end in schedule:x[count(slot-1,p-1,available.index(ship))]+=1
     for rid,value in craft_counts.items():x[ridcol[rid]]=value
@@ -1038,7 +1157,7 @@ def solve(args):
     plan['ship']=plan.ship.map(lambda key:mission.loc[key,'base_ship'])
     if args.output_dir:
         out=Path(args.output_dir);out.mkdir(parents=True,exist_ok=True)
-        (out/'plan_metadata.json').write_text(json.dumps({'target':target,'missing_drop_materials':missing_rates,'unknown_drop_materials':unknown_rates,'max_total_launches':getattr(args,'max_total_launches',0),'max_launches_per_day':getattr(args,'max_launches_per_day',0),'max_launches_per_hour':launch_limit,'launch_rate_scope':'per-slot','parallel':slots,'horizon_hours':H,'zero_fuel_ships':zero_fuel_ships,'drop_profile_source':profile_info,'targeting_profile_names':profile_info['target_names'],'optimization':{'status':int(result.status),'message':result.message,'gap':finite_or_none(getattr(result,'mip_gap',None)),'solver_runs':args.solver_runs,'upper_bound_crafts':getattr(result,'upper_bound_crafts',None),'secondary_stages':getattr(result,'secondary_stages',[]),'guarantees':guarantees,'removed_surplus_missions':removed_missions}},indent=2)+'\n',encoding='utf-8')
+        (out/'plan_metadata.json').write_text(json.dumps({'target':target,'missing_drop_materials':missing_rates,'unknown_drop_materials':unknown_rates,'max_total_launches':getattr(args,'max_total_launches',0),'max_launches_per_day':getattr(args,'max_launches_per_day',0),'max_launches_per_hour':launch_limit,'launch_rate_scope':'per-slot','parallel':slots,'horizon_hours':H,'zero_fuel_ships':zero_fuel_ships,'drop_profile_source':profile_info,'targeting_profile_names':profile_info['target_names'],'optimization':{'mode':args.mode,'craft_search':getattr(result,'craft_search',[]),'status':int(result.status),'message':result.message,'gap':finite_or_none(getattr(result,'mip_gap',None)),'solver_runs':args.solver_runs,'upper_bound_crafts':getattr(result,'upper_bound_crafts',None),'secondary_stages':getattr(result,'secondary_stages',[]),'guarantees':guarantees,'removed_surplus_missions':removed_missions}},indent=2)+'\n',encoding='utf-8')
         plan.to_csv(out/'launch_plan.csv',index=False)
         fuel_allocation.to_csv(out/'fuel_allocation.csv',index=False)
         schedule_df.to_csv(out/'schedule.csv',index=False)
@@ -1051,6 +1170,7 @@ def solve(args):
             for a,b in sleep_windows(args.days,daily,absolute):restrictions.append({'start_hour':a,'end_hour':b,'kind':kind})
         pd.DataFrame(restrictions,columns=['start_hour','end_hour','kind']).to_csv(out/'launch_restrictions.csv',index=False)
         print('Output:',out)
+        report_runtime(args,emit=False)
         try:
             from build_plan_dashboard import build
             build(out, out / 'plan.html')
@@ -1059,20 +1179,21 @@ def solve(args):
     report_runtime(args)
     if 'value_note' in drops and drops.value_note.notna().any():print('CAUTION: unknown drop estimates treated as zero')
 
-def report_runtime(args):
+def report_runtime(args,emit=True):
     runs=args.solver_runs
-    timing={'solver_seconds':args.solver_seconds,'additional_polish_seconds':getattr(args,'polish_seconds',10.),
+    timing={'mode':args.mode,'solver_seconds':args.solver_seconds,'requested_polish_seconds':getattr(args,'polish_seconds',10.),'additional_polish_seconds':getattr(args,'polish_seconds',10.) if args.mode=='balanced' else 0.,
             'model_construction_seconds':getattr(args,'initial_construction_seconds',args.model_construction_seconds)+sum(args.construction_totals),
             'primary_optimization_seconds':args.primary_optimization_seconds,
             'launch_minimization_seconds':sum(r['runtime_seconds'] for r in runs if r['stage']=='Secondary: launch count'),
             'fuel_minimization_seconds':sum(r['runtime_seconds'] for r in runs if r['stage']=='Secondary: fuel allocation'),
             'completion_optimization_seconds':sum(r['runtime_seconds'] for r in runs if r['stage']=='Secondary: mission completion time'),
             'other_secondary_seconds':sum(r['runtime_seconds'] for r in runs if r['stage'].startswith('Secondary:') and r['stage'] not in ['Secondary: launch count','Secondary: fuel allocation','Secondary: mission completion time']),
+            'optimization_elapsed_seconds':getattr(args,'optimization_elapsed_seconds',time.monotonic()-args.optimization_started),
             'total_elapsed_seconds':time.monotonic()-args.optimization_started,
             'any_solver_exceeded_requested_limit':any(r['exceeded_requested_limit'] for r in runs),
             'terminated_workers':sum(r['worker_terminated'] for r in runs),
             'budget_scope':'Construction and all optimization share monotonic deadlines; imports, checkpoint validation, cleanup and exports add measured overhead'}
-    print('[Runtime] '+json.dumps(timing,sort_keys=True),flush=True)
+    if emit:print('[Runtime] '+json.dumps(timing,sort_keys=True),flush=True)
     if args.output_dir:
         path=Path(args.output_dir)/'plan_metadata.json'
         metadata=json.loads(path.read_text());metadata['optimization']['timing']=timing
@@ -1082,6 +1203,8 @@ def report_runtime(args):
 
 def main():
     p=argparse.ArgumentParser(description='Optimize Reggference expected crafting across multiple events')
+    p.add_argument('--incumbent-plan',type=Path,help='Reuse exported schedule/crafts after validating them against every current constraint')
+    p.add_argument('--mode',choices=['balanced','max-crafts'],default='balanced',help='Balanced lexicographic planning or craft-focused bound/feasibility search')
     p.add_argument('--polish-seconds',type=float,default=10,help='Additional wall-clock budget for secondary objectives beyond --solver-seconds; 0 adds no extra time')
     p.add_argument('--verbose-solver',action='store_true',help='Show HiGHS progress output')
     p.add_argument('--max-total-launches',type=int,default=0,help='Maximum launches over all slots for the entire plan; 0 unlimited')

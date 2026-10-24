@@ -62,6 +62,9 @@ vm.runInContext(html.match(/<script>([\s\S]*?)<\/script>/)[1],context);
 assert.equal((nodes.ships.innerHTML.match(/<article/g)||[]).length,2);
 assert(nodes.lanes.innerHTML.includes('Target: ankh'));assert(nodes.lanes.innerHTML.includes('Target: meteorite'));
 assert(nodes.scheduleRows.innerHTML.includes('meteorite'));
+assert(nodes.craftBounds.textContent.includes('Validated feasible new crafts:'));
+assert(nodes.searchRuntime.textContent.includes('Mode: balanced'));
+assert(!nodes.searchRuntime.textContent.includes('Solver budget: unknown'));
 assert(vm.runInContext("missionKey({...sched[0],target:'ankh'})!==missionKey({...sched[0],target:'meteorite'})",context));
 assert(vm.runInContext("missionKey({...sched[0],target:'none'})===missionKey({...sched[0],target:undefined})",context));
 """

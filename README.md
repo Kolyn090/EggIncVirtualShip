@@ -173,6 +173,60 @@ the dashboard does not shift timestamps to make a plan pass. Changing a cap can
 change the feasible craft maximum; secondary launch minimization fixes the
 best feasible craft count and cannot lower it. Zero-cost missions stay available.
 
+### Craft-focused search or balanced planning
+
+The direct CLI defaults to `--mode balanced`, preserving the existing priorities:
+crafts, then launches, allocated fuel, completion and earlier starts. The runner
+now exposes `OPTIMIZATION_MODE="max-crafts"` near the top; explicit `--mode`
+overrides it.
+
+```sh
+# Explore the current 30-day ankh case with a 360-launch allowance:
+./run_optimizer.sh --mode max-crafts --target ankh-4 --max-total-launches 360 \
+  --solver-seconds 120 --polish-seconds 0 --output-dir results/ankh-max
+
+# Reuse that validated craft count while seeking a practical balanced plan:
+./run_optimizer.sh --mode balanced --target ankh-4 --max-total-launches 360 \
+  --incumbent-plan results/ankh-max --solver-seconds 30 --polish-seconds 120 \
+  --output-dir results/ankh-balanced
+```
+
+The runner's existing total-launch default remains **40**; use the explicit 360
+above or edit `MAX_TOTAL_LAUNCHES` for a larger search. `max-crafts` dedicates the
+shared primary wall-clock budget to feasible crafts and bounds. It runs an
+integer resource relaxation, smaller full-constraint scheduling searches for
+alternative mission mixes, and an unrestricted higher-craft test. Thresholds
+adapt to the best validated incumbent: a successful `>=14` search can discover
+30 directly, so it does not restart the large MILP for each integer count.
+Restricted-model infeasibility and timeouts remain **unknown globally**; only
+full-model certificates and mathematically valid resource bounds tighten the
+reported upper bound. No legal option is excluded from the full search by the
+candidate heuristics.
+
+In `max-crafts`, `--polish-seconds` is ignored (reported as zero applied extra
+time), and launch/fuel/completion minimization is skipped. A small deterministic
+fixed-order calendar improvement may run if time remains. High craft counts may
+require many launches; this mode makes no claim of convenience or secondary
+optimality. `balanced` retains the existing additional polishing allowance.
+
+`--incumbent-plan DIRECTORY` reads exported `schedule.csv` and `craft_plan.csv`,
+then independently validates them against the **current** recipes, inventory,
+drops, ship selection, fuel, horizon, events, sleep and launch caps. An
+incompatible plan is rejected rather than silently credited. A compatible plan
+is a craft floor: primary search may improve it, but later objectives cannot
+lower its craft count. This reuses a feasible witness, not a stale proof or a
+saved branch-and-bound tree. Actual inventory is never modified.
+
+Dashboard bounds explicitly distinguish validated **new** crafts, certified
+upper bound, proof status, mode, configured time budget and measured optimization
+runtime. Search attempts and scopes are saved in `optimization.craft_search`.
+See [the maximum-crafts report](benchmarks/MAX_CRAFTS.md) and reproduce the
+30/120/300-second full-targeting comparisons with:
+
+```sh
+.venv/bin/python benchmarks/max_crafts.py
+```
+
 ### Solver progress and performance
 
 ```sh
