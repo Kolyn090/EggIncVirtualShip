@@ -1,0 +1,9 @@
+recipe_id,result,ingredient,quantity
+8,ankh-2,ankh-1,6
+8,ankh-2,titanium-bar-3,2
+9,ankh-3,ankh-2,7
+10,ankh-4,ankh-3,8
+10,ankh-4,meteorite-3,4
+11,titanium-bar-3,titanium-ore-3,10
+12,meteorite-2,meteorite-1,9
+13,meteorite-3,meteorite-2,11
