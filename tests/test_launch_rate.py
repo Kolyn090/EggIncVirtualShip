@@ -7,6 +7,7 @@ import pandas as pd
 
 import test_inventory
 from optimize_reggference import validate_launch_rate, solve_timed_launches, FUELS
+from schedule_validation import validate_schedule
 
 
 class LaunchRateTests(unittest.TestCase):
@@ -28,14 +29,16 @@ class LaunchRateTests(unittest.TestCase):
         recipes=pd.read_csv(self.base/'reggference.csv')
         recipes['quantity']=1
         recipes.to_csv(self.base/'reggference.csv',index=False)
-        limited=self.run_plan(days=2/24,fuel=100,max_launches_per_hour=2)
+        limited=self.run_plan(days=2/24,fuel=100,max_launches_per_hour=1)
         unlimited=self.run_plan(days=2/24,fuel=100,max_launches_per_hour=0)
-        self.assertEqual(len(limited['schedule']),4)
+        self.assertEqual(len(limited['schedule']),6)
+        self.assertEqual(len(limited['schedule'][limited['schedule'].start_hour.abs()<1e-6]),3)
         self.assertEqual(len(unlimited['schedule']),6)
-        validate_launch_rate(limited['schedule'].start_hour,2)
+        validate_schedule(limited['schedule'].to_dict('records'),1)
         self.assertTrue((limited['schedule'].end_hour<=2+1e-7).all())
         meta=json.loads((limited['out']/'plan_metadata.json').read_text())
-        self.assertEqual(meta['max_launches_per_hour'],2)
+        self.assertEqual(meta['max_launches_per_hour'],1)
+        self.assertEqual(meta['launch_rate_scope'],'per-slot')
         self.assertIn('per rolling hour',(limited['out']/'plan.html').read_text())
 
     def test_sleep_waking_and_events(self):
@@ -43,7 +46,7 @@ class LaunchRateTests(unittest.TestCase):
         result=self.run_plan(days=6/24,fuel=100,events=1,event_hours=2,
                              sleep=['00:00-01:00'],no_launch=['0.18-0.19'],max_launches_per_hour=2)
         schedule=result['schedule']
-        validate_launch_rate(schedule.start_hour,2)
+        validate_schedule(schedule.to_dict('records'),2)
         self.assertTrue((schedule.start_hour>=1-1e-7).all())
         for row in schedule.itertuples():
             self.assertEqual(row.event_bonus,2-1e-7<=row.start_hour<4-1e-7)
@@ -52,6 +55,44 @@ class LaunchRateTests(unittest.TestCase):
             lane=lane.sort_values('start_hour')
             self.assertTrue((lane.start_hour.to_numpy()[1:]>=lane.end_hour.to_numpy()[:-1]-1e-7).all())
         self.assertTrue((result['fuel_allocation'].allocated_T%5==0).all())
+
+    def configure_fast_ships(self):
+        mission=pd.read_csv(self.base/'mission.csv');mission['duration']='15m'
+        mission.to_csv(self.base/'mission.csv',index=False)
+        recipes=pd.read_csv(self.base/'reggference.csv');recipes['quantity']=1
+        recipes.to_csv(self.base/'reggference.csv',index=False)
+
+    def test_per_slot_fast_missions_limits_one_two_and_unlimited(self):
+        self.configure_fast_ships()
+        for limit,count,finish in [(1,6,1.25),(2,12,1.5),(0,24,2.)]:
+            with self.subTest(limit=limit):
+                result=self.run_plan(days=2/24,fuel=100,max_launches_per_hour=limit,polish_seconds=5)
+                schedule=result['schedule']
+                self.assertEqual(len(schedule),count)
+                self.assertAlmostEqual(schedule.end_hour.max(),finish,places=4)
+                validate_schedule(schedule.to_dict('records'),limit)
+                for _,lane in schedule.groupby('slot'):
+                    validate_launch_rate(lane.start_hour,limit)
+
+    def test_per_slot_fast_missions_sleep_and_event_boundaries(self):
+        self.configure_fast_ships()
+        result=self.run_plan(days=6/24,parallel=1,fuel=100,max_launches_per_hour=1,
+                             events=1,event_hours=2,sleep=['00:00-01:00'],polish_seconds=5)
+        schedule=result['schedule']
+        validate_schedule(schedule.to_dict('records'),1,event_windows=[(0,2,False),(2,4,True),(4,6,False)],blackouts=[(0,1)])
+        self.assertEqual(len(schedule),5)
+        self.assertEqual(schedule.event_bonus.sum(),2)
+        self.assertAlmostEqual(schedule.start_hour.min(),1,places=5)
+
+    def test_validator_separate_slots_exact_hour_and_nonoverlap(self):
+        rows=[dict(slot=s,ship='test',start_hour=t,end_hour=t+.25,event_bonus=False)
+              for s in [1,2,3] for t in [0,1]]
+        validate_schedule(rows,1)
+        rows[1]['start_hour']=.5;rows[1]['end_hour']=.75
+        with self.assertRaisesRegex(ValueError,'rolling hour'):validate_schedule(rows,1)
+        validate_schedule(rows,0)
+        rows[1]['start_hour']=.1;rows[1]['end_hour']=.35
+        with self.assertRaisesRegex(ValueError,'overlapping'):validate_schedule(rows,0)
 
     def test_no_completed_mission_fits(self):
         result=self.run_plan(days=0.5/24,max_launches_per_hour=2)

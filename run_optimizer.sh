@@ -6,7 +6,7 @@ TARGET="metronome-4" # Any craftable material ID, e.g. ankh-4
 DAYS=30
 FUEL=500
 PARALLEL=3
-# Maximum launches within any rolling 60-minute window; 0 is unlimited
+# Maximum launches PER SHIP SLOT within any rolling 60-minute window; 0 is unlimited
 MAX_LAUNCHES_PER_HOUR=2
 EVENTS=1
 EVENT_HOURS=48

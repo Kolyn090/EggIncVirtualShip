@@ -205,16 +205,16 @@ def polish_model(args, incumbent, matrix, lbs, ubs, low, up, integrality, goal, 
 
 
 def compact_fixed_schedule(args, schedule, phases):
-    """Solve a timing LP for fixed missions, phases, slots and launch order.
+    """Solve a timing LP for fixed missions, phases, slots and per-slot launch order.
 
     This is a constrained scheduling solve, not a dashboard shift. It preserves
-    every drop/fuel/crafting decision and the rolling rule across all slots.
+    every drop/fuel/crafting decision and each slot's rolling rule.
     """
     if not schedule or getattr(args,'polish_seconds',10.)<=0:return schedule,[]
     from scipy.sparse import lil_matrix
     ordered=sorted(schedule,key=lambda r:(r[4],r[0]))
     size=len(ordered);H=args.days*24;limit=getattr(args,'max_launches_per_hour',0)
-    rows=[];rhs=[];last={}
+    rows=[];rhs=[];last={};lane_indices={}
     for i,row in enumerate(ordered):
         slot,p,ship,boost,t,end=row;duration=end-t
         rows.append({i:1,size:-1});rhs.append(-duration)
@@ -222,10 +222,10 @@ def compact_fixed_schedule(args, schedule, phases):
             k=last[slot];previous=ordered[k]
             rows.append({k:1,i:-1});rhs.append(-(previous[5]-previous[4]))
         last[slot]=i
-        if limit and i:
-            rows.append({i-1:1,i:-1});rhs.append(0)
-        if limit and i>=limit:
-            rows.append({i-limit:1,i:-1});rhs.append(-1)
+        indices=lane_indices.setdefault(slot,[])
+        if limit and len(indices)>=limit:
+            rows.append({indices[-limit]:1,i:-1});rhs.append(-1)
+        indices.append(i)
     A=lil_matrix((len(rows),size+1))
     for k,row in enumerate(rows):
         for col,value in row.items():A[k,col]=value
@@ -243,16 +243,18 @@ def compact_fixed_schedule(args, schedule, phases):
     x,stages=polish_model(fixed_args,witness,matrix,np.full(len(rows),-np.inf),np.array(rhs),
                          lows,highs,np.zeros(size+2),size+1,
                          [('fixed-plan completion time',finish),('fixed-plan earlier launches',early)],
-                         'fixed mission identities, phases, slots and global launch order')
-    polished=[(r[0],r[1],r[2],r[3],float(x[i]),float(x[i])+r[5]-r[4]) for i,r in enumerate(ordered)]
-    validate_launch_rate([r[4] for r in polished],limit)
+                         'fixed mission identities, phases, slots and per-slot launch order')
+    polished=sorted([(r[0],r[1],r[2],r[3],float(x[i]),float(x[i])+r[5]-r[4])
+                     for i,r in enumerate(ordered)],key=lambda r:(r[4],r[0]))
+    validate_schedule([dict(zip(['slot','phase','ship','event_bonus','start_hour','end_hour'],r)) for r in polished],limit)
     return polished,stages
 
 
 def solve_timed_launches(args, available, hours, fuel, phases, mats, groups, outputs, inventory, rate, target, launch_cap=None, target_upper=None):
     """Continuous-time MILP with globally ordered, optional individual launches.
 
-    For sorted launches, the rolling rule is exactly t[i+L] >= t[i]+1.
+    Each slot tracks the last L launch times; its next launch must be at
+    least one hour after its L-th preceding launch. Other slots are independent.
     Each launch selects one ship/phase and one slot. Per-slot ready times
     carry forward across ALL launches, including those assigned elsewhere.
     No rounding, shifting, or schedule repair is performed after solving.
@@ -261,7 +263,7 @@ def solve_timed_launches(args, available, hours, fuel, phases, mats, groups, out
     H = args.days * 24
     limit = args.max_launches_per_hour
     # Two independent safe bounds on the number of completed missions.
-    nlaunch = min(int(np.ceil(H) * limit), int(args.parallel * np.floor(H / min(hours))))
+    nlaunch = min(int(np.ceil(H) * limit * args.parallel), int(args.parallel * np.floor(H / min(hours))))
     minimum_fuel=float(np.min(fuel.sum(axis=1)))
     if minimum_fuel>0:
         nlaunch=min(nlaunch,int(np.floor(args.fuel/minimum_fuel+1e-9)))
@@ -279,6 +281,11 @@ def solve_timed_launches(args, available, hours, fuel, phases, mats, groups, out
     slots=[[var(hi=1,discrete=True) for _ in range(args.parallel)] for _ in range(nlaunch)]
     choices_by_launch=[{(p,j):var(hi=1,discrete=True) for p,j in choices} for _ in range(nlaunch)]
     phase_choices=[{p:var(hi=1,discrete=True) for p in range(len(phases))} for _ in range(nlaunch)]
+    # If L missions cannot finish within an hour, nonoverlap already enforces
+    # the rolling rule. Otherwise track each slot's last L launch+1h thresholds.
+    needs_history=bool(limit and min(hours)*limit<1-1e-12)
+    history=[[[var(hi=H+1) for _ in range(limit)] for _ in range(args.parallel)]
+             for _ in range(nlaunch)] if needs_history else None
     crafts={rid:var(discrete=True) for rid,_ in groups}
     makespan=var(hi=H)
     active_times=[var(hi=H) for _ in range(nlaunch)]
@@ -305,9 +312,6 @@ def solve_timed_launches(args, available, hours, fuel, phases, mats, groups, out
         if i:
             row=active(i);row.update(active(i-1,-1));constraint(row,hi=0)
             constraint({times[i]:1,times[i-1]:-1},lo=0)
-        if i>=limit:
-            row=active(i,-M);row.update({times[i]:1,times[i-limit]:-1})
-            constraint(row,lo=1-M)
         for p,(a,b,_) in enumerate(phases):
             cols=[phase_choices[i][p]]
             if not cols:continue
@@ -326,6 +330,18 @@ def solve_timed_launches(args, available, hours, fuel, phases, mats, groups, out
         for col,h in duration.items():row[col]-=h
         constraint(row,lo=-H)
         for slot,u in enumerate(slots[i]):
+            if history is not None:
+                if i:
+                    constraint({times[i]:1,history[i-1][slot][-1]:-1,u:-M},lo=-M)
+                for k,q in enumerate(history[i][slot]):
+                    if i:
+                        # Preserve the queue if this launch belongs elsewhere.
+                        constraint({q:1,history[i-1][slot][k]:-1,u:M},lo=0)
+                    if k==0:
+                        constraint({q:1,times[i]:-1,u:-M},lo=1-M)
+                    elif i:
+                        # Shift history on a launch in this slot only.
+                        constraint({q:1,history[i-1][slot][k-1]:-1,u:-M},lo=-M)
             if i:
                 constraint({ready[i][slot]:1,ready[i-1][slot]:-1},lo=0)
                 constraint({times[i]:1,ready[i-1][slot]:-1,u:-M},lo=-M)
@@ -381,7 +397,7 @@ def solve_timed_launches(args, available, hours, fuel, phases, mats, groups, out
             slot=next(k for k,col in enumerate(slots[i]) if x[col]>0.5)
             t=float(x[times[i]])
             schedule.append((slot+1,p+1,available[j],phases[p][2],t,t+hours[j]))
-        validate_launch_rate([r[4] for r in schedule],limit)
+        validate_schedule([dict(zip(['slot','phase','ship','event_bonus','start_hour','end_hour'],r)) for r in schedule],limit)
         return schedule, {rid:int(round(x[col])) for rid,col in crafts.items()}, [int(round(x[col])) for col in blocks]
     def validate_timed(proposal):
         rows=extract(proposal)[0]
@@ -624,7 +640,7 @@ def solve(args):
                 # merely because a scheduling attempt timed out.
                 if cap is None:break
                 cap=max(1,cap*2)
-                if cap>=int(np.ceil(H)*launch_limit):cap=None
+                if cap>=int(np.ceil(H)*launch_limit*slots):cap=None
             print(f'[Refine] Retrying with launch cap {cap if cap is not None else "full"}',flush=True)
         if best is None:raise RuntimeError('No feasible timed schedule found within solver budget; no plan exported')
         result,schedule,craft_counts,fuel_blocks=best
@@ -708,7 +724,6 @@ def solve(args):
         a,b,boost=phases[row.phase-1]
         if not a-1e-5<=row.start_hour<b+1e-5 or row.end_hour>H+1e-5:
             raise RuntimeError(f'Schedule validation failed: {row}')
-    validate_launch_rate(schedule_df.start_hour,launch_limit)
     for _,lane in schedule_df.groupby('slot'):
         lane=lane.sort_values('start_hour')
         if (lane.start_hour.to_numpy()[1:] < lane.end_hour.to_numpy()[:-1]-1e-7).any():
@@ -745,7 +760,7 @@ def solve(args):
         print(f'Launch blackouts: {len(sleeps)} window(s)')
     if args.output_dir:
         out=Path(args.output_dir);out.mkdir(parents=True,exist_ok=True)
-        (out/'plan_metadata.json').write_text(json.dumps({'target':target,'missing_drop_materials':missing_rates,'unknown_drop_materials':unknown_rates,'max_launches_per_hour':launch_limit,'parallel':slots,'horizon_hours':H,'optimization':{'status':int(result.status),'message':result.message,'gap':finite_or_none(getattr(result,'mip_gap',None)),'solver_runs':args.solver_runs,'upper_bound_crafts':getattr(result,'upper_bound_crafts',None),'secondary_stages':getattr(result,'secondary_stages',[])}},indent=2)+'\n',encoding='utf-8')
+        (out/'plan_metadata.json').write_text(json.dumps({'target':target,'missing_drop_materials':missing_rates,'unknown_drop_materials':unknown_rates,'max_launches_per_hour':launch_limit,'launch_rate_scope':'per-slot','parallel':slots,'horizon_hours':H,'optimization':{'status':int(result.status),'message':result.message,'gap':finite_or_none(getattr(result,'mip_gap',None)),'solver_runs':args.solver_runs,'upper_bound_crafts':getattr(result,'upper_bound_crafts',None),'secondary_stages':getattr(result,'secondary_stages',[])}},indent=2)+'\n',encoding='utf-8')
         plan.to_csv(out/'launch_plan.csv',index=False)
         fuel_allocation.to_csv(out/'fuel_allocation.csv',index=False)
         schedule_df.to_csv(out/'schedule.csv',index=False)
@@ -769,7 +784,7 @@ def main():
     p=argparse.ArgumentParser(description='Optimize Reggference expected crafting across multiple events')
     p.add_argument('--polish-seconds',type=float,default=10,help='Additional budget for lexicographic schedule improvement; 0 disables')
     p.add_argument('--verbose-solver',action='store_true',help='Show HiGHS progress output')
-    p.add_argument('--max-launches-per-hour',type=int,default=0,help='Maximum launches across all slots per rolling hour; 0 is unlimited')
+    p.add_argument('--max-launches-per-hour',type=int,default=0,help='Maximum launches per ship slot per rolling hour; 0 is unlimited')
     p.add_argument('--target',default=TARGET,help='Craftable material ID from the recipe CSV')
     p.add_argument('--inventory',type=Path,help='CSV of material_id,quantity starting whole-item counts')
     p.add_argument('--days',type=float,default=30)

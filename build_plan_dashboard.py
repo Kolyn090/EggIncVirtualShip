@@ -92,7 +92,7 @@ TEMPLATE = r'''<!doctype html>
 <p class="foot">This plan uses expected drops, not guaranteed inventory. Events are hypothetical windows chosen by the optimizer. An optimal MILP solution can have alternative equally optimal schedules.</p>
 </main><script>
 const data=/*__DATA__*/;
-document.getElementById('launchLimit').textContent=data.metadata?.max_launches_per_hour ? `Launch limit: ${data.metadata.max_launches_per_hour} per rolling hour` : 'Launch limit: unlimited';
+document.getElementById('launchLimit').textContent=data.metadata?.max_launches_per_hour ? `Launch limit: ${data.metadata.max_launches_per_hour} per slot per rolling hour` : 'Launch limit: unlimited';
 const optimization=data.metadata?.optimization;
 document.getElementById('planStatus').textContent=optimization ? (optimization.status===0?'Craft maximum proven':'Feasible plan; craft maximum unproven') : 'Legacy plan: proof status unavailable';
 const targetId=data.metadata?.target||'metronome-4';

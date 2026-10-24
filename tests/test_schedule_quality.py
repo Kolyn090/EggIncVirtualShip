@@ -61,7 +61,7 @@ class QualityTests(unittest.TestCase):
         self.assertAlmostEqual(result['fuel_allocation'].used_T.sum(),16,places=4)
         self.assertAlmostEqual(result['schedule'].start_hour.min(),2,places=4)
         self.assertAlmostEqual(result['schedule'].end_hour.max(),4,places=4)
-        validate_launch_rate(result['schedule'].start_hour,2)
+        validate_schedule(result['schedule'].to_dict('records'),2)
         stages=json.loads((result['out']/'plan_metadata.json').read_text())['optimization']['secondary_stages']
         self.assertIn('fuel allocation',[s['objective'] for s in stages])
         completion=next(s for s in stages if s['objective']=='mission completion time')
@@ -86,9 +86,9 @@ class QualityTests(unittest.TestCase):
         self.assertEqual(len(stages),1)
         self.assertFalse(stages[0]['accepted'])
 
-    def test_validation_rejects_close_global_launches_and_wrong_events(self):
+    def test_validation_allows_close_cross_slot_launches_and_rejects_wrong_events(self):
         rows=[dict(slot=s,ship='test',start_hour=2+t,end_hour=3+t,event_bonus=True) for s,t in [(1,0),(2,1e-9),(3,2e-9)]]
-        with self.assertRaisesRegex(ValueError,'rolling hour'):validate_schedule(rows,2,event_windows=[(0,2,False),(2,4,True)])
+        validate_schedule(rows,1,event_windows=[(0,2,False),(2,4,True)])
         rows[0]['event_bonus']=False
         with self.assertRaisesRegex(ValueError,'eligibility'):validate_schedule(rows[:1],2,event_windows=[(0,2,False),(2,4,True)])
 

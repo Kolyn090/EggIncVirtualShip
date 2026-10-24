@@ -1,5 +1,10 @@
 # Optimizer performance benchmark
 
+> Historical report: measurements below used the former global launch-rate
+> semantics. Current `--max-launches-per-hour` is independent per ship slot;
+> the cross-slot staggering described below no longer applies.
+
+
 Baseline: commit `80df509`. Updated measurements: current implementation.
 Cloud Linux, Python 3.12, SciPy 1.17.0 / HiGHS 1.8.0. Each case uses the metronome target,
 zero starting inventory, 500T fuel, three slots, one 48-hour 2x event.
