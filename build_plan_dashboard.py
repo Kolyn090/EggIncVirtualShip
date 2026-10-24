@@ -17,6 +17,8 @@ def build(results: Path, output: Path):
         raise SystemExit('Missing optimizer results: ' + ', '.join(missing) + f' in {results}')
     data = {n.replace('.csv',''):read_rows(results / n) for n in REQUIRED}
     data['sleep_windows'] = read_rows(results/'sleep_windows.csv') if (results/'sleep_windows.csv').exists() else []
+    metadata=results/'plan_metadata.json'
+    data['metadata']=json.loads(metadata.read_text(encoding='utf-8')) if metadata.exists() else {'target':'metronome-4'}
     blob = json.dumps(data, ensure_ascii=False).replace('</', '<\\/')
     html = TEMPLATE.replace('/*__DATA__*/', blob)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -39,8 +41,8 @@ TEMPLATE = r'''<!doctype html>
 .table-panel thead th{position:sticky;top:0;z-index:3;background:#17263c;box-shadow:inset 0 -1px 0 var(--border);background-clip:padding-box}
 .table-panel tbody td{background:var(--panel)}
 </style></head><body><main>
-<header class="head"><div><div class="eyebrow">Mission optimization / expected drops</div><h1>Reggference plan</h1><p>Understand launches, event bonuses, crafting, and remaining materials at a glance.</p></div><div class="tag" id="horizon"></div></header>
-<section class="stats"><div class="stat"><div class="k">Total achievable metronomes</div><strong id="craftTotal">—</strong><small id="inventorySummary"></small></div><div class="stat"><div class="k">Total launches</div><strong id="launchTotal">—</strong><small id="boostTotal"></small></div><div class="stat"><div class="k">Fuel consumed</div><strong id="fuelTotal">—</strong><small>Combined four virtues, trillion units</small></div><div class="stat"><div class="k">Mission slots</div><strong id="slotTotal">—</strong><small id="eventTotal"></small></div></section>
+<header class="head"><div><div class="eyebrow">Mission optimization / expected drops</div><h1 id="targetTitle">Crafting plan</h1><p>Understand launches, event bonuses, crafting, and remaining materials at a glance.</p></div><div class="tag" id="horizon"></div></header>
+<section class="stats"><div class="stat"><div class="k">Total achievable target items</div><strong id="craftTotal">—</strong><small id="inventorySummary"></small></div><div class="stat"><div class="k">Total launches</div><strong id="launchTotal">—</strong><small id="boostTotal"></small></div><div class="stat"><div class="k">Fuel consumed</div><strong id="fuelTotal">—</strong><small>Combined four virtues, trillion units</small></div><div class="stat"><div class="k">Mission slots</div><strong id="slotTotal">—</strong><small id="eventTotal"></small></div></section>
 <div class="section"><div><h2>Recommended ships</h2><small>Grouped across all three slots and planning phases</small></div><div class="filters"><input id="search" placeholder="Filter ship names" aria-label="Filter ships"><select id="boostFilter" aria-label="Filter launches"><option value="all">All launches</option><option value="boost">Boosted only</option><option value="normal">Regular only</option></select></div></div>
 <div id="ships" class="shipgrid"></div>
 <div class="section"><div><h2>Launch checklist</h2><small>Large clickable cells ordered by launch time within each slot. Click to mark done.</small></div><div class="filters"><span class="tag" id="doneCount">0 / 0 done</span><button class="button" id="jumpProgress" type="button">Jump to next launch ↗</button><select id="slotFilter" aria-label="Timeline slot"><option value="all">All slots</option></select><button class="button" id="exportProgress">Export progress</button><button class="button" id="importProgress">Import progress</button><input type="file" id="progressFile" accept="application/json,.json" hidden></div></div>
@@ -53,11 +55,15 @@ TEMPLATE = r'''<!doctype html>
 <p class="foot">This plan uses expected drops, not guaranteed inventory. Events are hypothetical windows chosen by the optimizer. An optimal MILP solution can have alternative equally optimal schedules.</p>
 </main><script>
 const data=/*__DATA__*/;
+const targetId=data.metadata?.target||'metronome-4';
+const targetName=({'metronome-4':'Reggference Quantum Metronome','ankh-4':'Brilliant Tungsten Ankh'})[targetId]||targetId;
+document.title=targetName+' • Mission Plan';
+document.getElementById('targetTitle').textContent='Target: '+targetName;
 const num=v=>Number(v)||0, fmt=(v,d=2)=>Number(v).toLocaleString(undefined,{maximumFractionDigits:d}), day=h=>`Day ${fmt(num(h)/24,2)}`, esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const sched=data.schedule.map(r=>({...r,slot:num(r.slot),start_hour:num(r.start_hour),end_hour:num(r.end_hour),event_bonus:String(r.event_bonus).toLowerCase()==='true'})).sort((a,b)=>a.start_hour-b.start_hour||a.slot-b.slot);
 const missionKey=r=>`${r.slot}|${r.ship}|${num(r.start_hour).toFixed(5)}|${num(r.end_hour).toFixed(5)}`;
 const planIdentity=sched.map(missionKey).join(';');
-const storageKey='reggference-done-v2-'+(function(){let h=2166136261;for(let i=0;i<planIdentity.length;i++){h^=planIdentity.charCodeAt(i);h=Math.imul(h,16777619)}return (h>>>0).toString(36)})();
+const storageKey='reggference-done-v2-'+targetId+'-'+(function(){let h=2166136261;for(let i=0;i<planIdentity.length;i++){h^=planIdentity.charCodeAt(i);h=Math.imul(h,16777619)}return (h>>>0).toString(36)})();
 let completed=new Set();
 try{completed=new Set(JSON.parse(localStorage.getItem(storageKey)||'[]'))}catch(e){}
 function saveProgress(){try{localStorage.setItem(storageKey,JSON.stringify([...completed]))}catch(e){}}
@@ -72,8 +78,8 @@ const fuels=['curiousity','kindness','resilence','integrity'];
 const fuelUse=Object.fromEntries(fuels.map(f=>[f,plans.reduce((a,r)=>a+num(r[f+'_T']),0)]));
 const totalFuel=Object.values(fuelUse).reduce((a,b)=>a+b,0);
 document.getElementById('horizon').textContent= `${fmt(horizon/24,2)} day horizon`;
-const newlyCrafted=num(data.craft_plan.find(r=>r.material_id==='metronome-4')?.crafts);
-const alreadyOwned=num(data.material_balance.find(r=>r.material_id==='metronome-4')?.starting_inventory);
+const newlyCrafted=num(data.craft_plan.find(r=>r.material_id===targetId)?.crafts);
+const alreadyOwned=num(data.material_balance.find(r=>r.material_id===targetId)?.starting_inventory);
 document.getElementById('craftTotal').textContent=fmt(newlyCrafted+alreadyOwned,0);
 document.getElementById('inventorySummary').textContent=`${fmt(newlyCrafted,0)} newly crafted + ${fmt(alreadyOwned,0)} already owned (expected-drop model)`;
 document.getElementById('launchTotal').textContent=fmt(sched.length,0);
@@ -124,7 +130,7 @@ function renderSchedule(){
  document.getElementById('scheduleRows').innerHTML=rows.length?rows.map(r=>{const k=missionKey(r),checked=completed.has(k);return `<tr><td>${day(r.start_hour)}</td><td>${day(r.end_hour)}</td><td>${r.slot}</td><td>${esc(r.ship)}</td><td class="${r.event_bonus?'warn':''}">${r.event_bonus?'2× capacity':'Normal'}</td><td><button type="button" data-mission="${esc(k)}" class="${checked?'table-done':'table-undone'}" aria-pressed="${checked}">${checked?'✓ Done':'Mark done'}</button></td></tr>`}).join(''):'<tr><td colspan="6" class="empty">No matching launches.</td></tr>';
 }
 function renderFuel(){let max=Math.max(.001,...Object.values(fuelUse));document.getElementById('fuelPanel').innerHTML=fuels.map(f=>`<div class="fuelrow"><span>${f}</span><strong>${fmt(fuelUse[f],3)}T</strong></div><div class="progress"><div style="width:${100*fuelUse[f]/max}%"></div></div>`).join('')+`<div class="fuelrow"><span>Combined</span><strong>${fmt(totalFuel,3)}T</strong></div>`}
-function renderCrafts(){document.getElementById('craftPanel').innerHTML=data.craft_plan.length?data.craft_plan.map(r=>`<div class="fuelrow"><span>${esc(r.material_id)}</span><strong class="${r.material_id==='metronome-4'?'good':''}">${fmt(r.crafts,0)}</strong></div>`).join(''):'<div class="empty">No crafts planned.</div>'}
+function renderCrafts(){document.getElementById('craftPanel').innerHTML=data.craft_plan.length?data.craft_plan.map(r=>`<div class="fuelrow"><span>${esc(r.material_id)}</span><strong class="${r.material_id===targetId?'good':''}">${fmt(r.crafts,0)}</strong></div>`).join(''):'<div class="empty">No crafts planned.</div>'}
 function renderMaterials(){const q=document.getElementById('materialSearch').value.toLowerCase().trim();let rows=data.material_balance.filter(r=>r.material_id.toLowerCase().includes(q));document.getElementById('materials').innerHTML=rows.map(r=>`<tr><td>${esc(r.material_id)}</td><td class="numeric">${fmt(num(r.starting_inventory),0)}</td><td class="numeric">${fmt(r.expected_drops,3)}</td><td class="numeric">${fmt(r.crafted,0)}</td><td class="numeric">${fmt(r.consumed,3)}</td><td class="numeric ${num(r.expected_remaining)<1?'warn':''}">${fmt(r.expected_remaining,3)}</td></tr>`).join('')||'<tr><td colspan="6" class="empty">No matching materials.</td></tr>'}
 function update(){renderShips();drawTimeline();renderSchedule();scrollToProgress()}
 document.getElementById('search').addEventListener('input',e=>{search=e.target.value.trim().toLowerCase();update()});document.getElementById('boostFilter').addEventListener('change',e=>{filter=e.target.value;update()});const select=document.getElementById('slotFilter');for(let s of slots){let o=document.createElement('option');o.value=s;o.textContent='Slot '+s;select.appendChild(o)}select.addEventListener('change',e=>{slot=e.target.value;update()});document.addEventListener('click',e=>{const btn=e.target.closest('[data-mission]');if(btn)toggleDone(btn.dataset.mission)});

@@ -4,6 +4,7 @@ Events are hypothetical, evenly spaced in the horizon; all rates are expectation
 """
 import argparse
 import csv
+import json
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -120,6 +121,7 @@ def launch_phases(event_phases, sleeps):
     return phases
 
 def solve(args):
+    target=getattr(args, 'target', TARGET)
     base=Path(args.data_dir)
     if not (base/'mission.csv').exists() and (base/'data'/'mission.csv').exists():base=base/'data'
     mission=pd.read_csv(base/'mission.csv').set_index('ship')
@@ -137,13 +139,24 @@ def solve(args):
         if requested-set(mission.index):raise ValueError('Unknown ships '+str(requested-set(mission.index)))
         available=[s for s in available if s in requested]
     if not available:raise ValueError('No usable ship rates')
-    mats={TARGET}
+    if target not in set(recipes.result):
+        raise ValueError(f'Unknown crafting target {target!r}; choose from: '+', '.join(sorted(set(recipes.result))))
+    mats={target}
     while True:
         expanded=mats|set(recipes.loc[recipes.result.isin(mats),'ingredient'])
         if expanded==mats:break
         mats=expanded
+    groups=[(rid,g) for rid,g in groups if outputs[rid] in mats]
+    required_mats=set(mats)
     mats=sorted(mats|set(inventory))
     drops=drops[drops.ship.isin(available)&drops.material_id.isin(mats)].copy()
+    numeric_rates=pd.to_numeric(drops.expectation_per_launch,errors='coerce')
+    missing_rates=sorted(required_mats-set(drops.loc[numeric_rates.notna(),'material_id']))
+    unknown_rates=sorted(set(drops.loc[numeric_rates.isna(),'material_id']))
+    if missing_rates:
+        print('No known ship drop rates (inventory/crafting only): '+', '.join(missing_rates))
+    if unknown_rates:
+        print('Unknown drop rates treated as zero (not measured zero): '+', '.join(unknown_rates))
     drops['expectation_per_launch']=pd.to_numeric(drops.expectation_per_launch,errors='coerce').fillna(0)
     if drops.duplicated(['ship','material_id']).any():raise ValueError('Duplicate rates')
     rate={(r.ship,r.material_id):float(r.expectation_per_launch) for r in drops.itertuples()}
@@ -241,7 +254,7 @@ def solve(args):
                 up[count(slot,p,j)]=min(max_launches[j],int(np.ceil((phases[p][1]-phases[p][0])/hours[j]-1e-10)))
     for k in range(len(FUELS)):up[block(k)]=int(np.floor(args.fuel/args.fuel_step+1e-9))
     integrality=np.ones(n);integrality[count_size+last_size:recipes_offset]=0
-    goal_rid=next((rid for rid,_ in groups if outputs[rid]==TARGET),None)
+    goal_rid=next((rid for rid,_ in groups if outputs[rid]==target),None)
     if goal_rid is None:raise ValueError('Missing final crafting recipe')
     obj=np.zeros(n);obj[ridcol[goal_rid]]=-1
     result=milp(obj,integrality=integrality,bounds=Bounds(low,up),constraints=constraints,
@@ -285,9 +298,9 @@ def solve(args):
     plan=pd.DataFrame(detail, columns=['slot','phase','ship','event_bonus','launches','total_hours','total_fuel_T']+[f+'_T' for f in FUELS]);balance_df=pd.DataFrame(balance)
     print('MILP status:',result.message)
     if result.status!=0:print('WARNING: Solution not certified globally optimal within time limit')
-    print(f'Expected {TARGET} crafts: {int(x[ridcol[goal_rid]])}')
-    print(f'Already owned {TARGET}: {inventory.get(TARGET,0)}')
-    print(f'Total achievable {TARGET}: {inventory.get(TARGET,0)+int(x[ridcol[goal_rid]])}')
+    print(f'Expected {target} crafts: {int(x[ridcol[goal_rid]])}')
+    print(f'Already owned {target}: {inventory.get(target,0)}')
+    print(f'Total achievable {target}: {inventory.get(target,0)+int(x[ridcol[goal_rid]])}')
     print(f'Fuel used: {plan.total_fuel_T.sum() if len(plan) else 0:.3f} / {args.fuel:g} T')
     fuel_allocation = pd.DataFrame([{'fuel':kind, 'used_T':sum(int(x[count(slot,p,j)])*fuel[j,k]
         for slot in range(slots) for p in range(np_) for j in range(ns)),
@@ -304,6 +317,7 @@ def solve(args):
         print(f'Launch blackouts: {len(sleeps)} window(s)')
     if args.output_dir:
         out=Path(args.output_dir);out.mkdir(parents=True,exist_ok=True)
+        (out/'plan_metadata.json').write_text(json.dumps({'target':target,'missing_drop_materials':missing_rates,'unknown_drop_materials':unknown_rates},indent=2)+'\n',encoding='utf-8')
         plan.to_csv(out/'launch_plan.csv',index=False)
         fuel_allocation.to_csv(out/'fuel_allocation.csv',index=False)
         schedule_df.to_csv(out/'schedule.csv',index=False)
@@ -321,6 +335,7 @@ def solve(args):
 
 def main():
     p=argparse.ArgumentParser(description='Optimize Reggference expected crafting across multiple events')
+    p.add_argument('--target',default=TARGET,help='Craftable material ID from the recipe CSV')
     p.add_argument('--inventory',type=Path,help='CSV of material_id,quantity starting whole-item counts')
     p.add_argument('--days',type=float,default=30)
     p.add_argument('--fuel',type=float,default=500)
