@@ -3,11 +3,11 @@ set -euo pipefail
 
 # ===== OPTIMIZER CONFIGURATION =====
 TARGET="metronome-4" # Any craftable material ID, e.g. ankh-4
-DAYS=70
+DAYS=60
 FUEL=500
 PARALLEL=3
 # Maximum launches within any rolling 60-minute window; 0 is unlimited
-MAX_LAUNCHES_PER_HOUR=2
+MAX_LAUNCHES_PER_HOUR=3
 EVENTS=2
 EVENT_HOURS=48
 EVENT_MULTIPLIER=2
