@@ -120,6 +120,125 @@ def launch_phases(event_phases, sleeps):
     if not phases: raise ValueError('No launch windows remain after sleep exclusions')
     return phases
 
+def validate_launch_rate(times, limit, tolerance=1e-7):
+    """Check every half-open rolling window [t, t + 1 hour)."""
+    if limit < 0 or int(limit) != limit:
+        raise ValueError('Maximum launches per hour must be a nonnegative integer')
+    ordered = np.sort(np.asarray(list(times), dtype=float))
+    if not np.isfinite(ordered).all():
+        raise ValueError('Launch times must be finite')
+    if limit and len(ordered) > limit:
+        gaps = ordered[limit:] - ordered[:-limit]
+        if (gaps < 1 - tolerance).any():
+            raise ValueError(f'Launch-rate violation: more than {limit} launches in a rolling hour')
+
+
+def solve_timed_launches(args, available, hours, fuel, phases, mats, groups, outputs, inventory, rate, target):
+    """Continuous-time MILP with globally ordered, optional individual launches.
+
+    For sorted launches, the rolling rule is exactly t[i+L] >= t[i]+1.
+    Each launch selects one ship/phase and one slot. Per-slot ready times
+    carry forward across ALL launches, including those assigned elsewhere.
+    No rounding, shifting, or schedule repair is performed after solving.
+    """
+    from scipy.sparse import coo_matrix
+    H = args.days * 24
+    limit = args.max_launches_per_hour
+    # Two independent safe bounds on the number of completed missions.
+    nlaunch = min(int(np.ceil(H) * limit), int(args.parallel * np.floor(H / min(hours))))
+    minimum_fuel=float(np.min(fuel.sum(axis=1)))
+    if minimum_fuel>0:
+        nlaunch=min(nlaunch,int(np.floor(args.fuel/minimum_fuel+1e-9)))
+    choices = [(p,j) for p,(a,b,_) in enumerate(phases) for j,h in enumerate(hours)
+               if a + h <= H and b > a]
+    lower=[]; upper=[]; integer=[]
+    def var(lo=0, hi=np.inf, discrete=False):
+        idx=len(lower);lower.append(lo);upper.append(hi);integer.append(int(discrete));return idx
+    times=[var(hi=H) for _ in range(nlaunch)]
+    ready=[[var(hi=H) for _ in range(args.parallel)] for _ in range(nlaunch)]
+    slots=[[var(hi=1,discrete=True) for _ in range(args.parallel)] for _ in range(nlaunch)]
+    choices_by_launch=[{(p,j):var(hi=1,discrete=True) for p,j in choices} for _ in range(nlaunch)]
+    crafts={rid:var(discrete=True) for rid,_ in groups}
+    blocks=[var(hi=int(np.floor(args.fuel/args.fuel_step+1e-9)),discrete=True) for _ in FUELS]
+    ri=[];ci=[];values=[];lbs=[];ubs=[]
+    def constraint(row,lo=-np.inf,hi=np.inf):
+        index=len(lbs);lbs.append(lo);ubs.append(hi)
+        for col,value in row.items():
+            if value:ri.append(index);ci.append(col);values.append(value)
+    def active(i,scale=1):
+        return {col:scale for col in choices_by_launch[i].values()}
+    M=H+max(hours)+1
+    for i,choices_i in enumerate(choices_by_launch):
+        constraint(active(i),hi=1)
+        row=active(i,-1)
+        row.update({col:1 for col in slots[i]})
+        constraint(row,lo=0,hi=0)
+        if i:
+            row=active(i);row.update(active(i-1,-1));constraint(row,hi=0)
+            constraint({times[i]:1,times[i-1]:-1},lo=0)
+        if i>=limit:
+            row=active(i,-M);row.update({times[i]:1,times[i-limit]:-1})
+            constraint(row,lo=1-M)
+        for p,(a,b,_) in enumerate(phases):
+            cols=[col for (phase,j),col in choices_i.items() if phase==p]
+            if not cols:continue
+            # Match the existing model's one-second guard before phase ends.
+            row={col:-M for col in cols};row[times[i]]=1
+            constraint(row,lo=a-M)
+            row={col:M for col in cols};row[times[i]]=1
+            constraint(row,hi=min(b-1/3600,H)+M)
+        duration={col:hours[j] for (p,j),col in choices_i.items()}
+        row=dict(duration);row[times[i]]=1
+        constraint(row,hi=H)
+        for slot,u in enumerate(slots[i]):
+            if i:
+                constraint({ready[i][slot]:1,ready[i-1][slot]:-1},lo=0)
+                constraint({times[i]:1,ready[i-1][slot]:-1,u:-M},lo=-M)
+            row={ready[i][slot]:1,times[i]:-1,u:-M}
+            row.update({col:-h for col,h in duration.items()})
+            constraint(row,lo=-M)
+    for mat in mats:
+        row=defaultdict(float)
+        for choices_i in choices_by_launch:
+            for (p,j),col in choices_i.items():
+                row[col]-=rate.get((available[j],mat),0)*(args.event_multiplier if phases[p][2] else 1)
+        for rid,g in groups:
+            if outputs[rid]==mat:row[crafts[rid]]-=1
+            for r in g.itertuples():
+                if r.ingredient==mat:row[crafts[rid]]+=float(r.quantity)
+        constraint(row,hi=inventory.get(mat,0))
+    for k in range(len(FUELS)):
+        row={blocks[k]:-args.fuel_step}
+        for choices_i in choices_by_launch:
+            row.update({col:fuel[j,k] for (p,j),col in choices_i.items()})
+        constraint(row,hi=0)
+    constraint({col:1 for col in blocks},hi=int(np.floor(args.fuel/args.fuel_step+1e-9)))
+    objective=np.zeros(len(lower))
+    goal=next(rid for rid,_ in groups if outputs[rid]==target)
+    objective[crafts[goal]]=-1
+    matrix=coo_matrix((values,(ri,ci)),shape=(len(lbs),len(lower))).tocsr()
+    print(f'Continuous launch model: {nlaunch} optional launches, {len(lower)} variables')
+    result=milp(objective,integrality=np.array(integer),bounds=Bounds(lower,upper),
+                constraints=LinearConstraint(matrix,lbs,ubs),
+                options={'time_limit':args.solver_seconds,'mip_rel_gap':0.0})
+    if result.x is None:
+        raise RuntimeError('No feasible solution returned: '+result.message)
+    x=result.x
+    discrete=np.array(integer,dtype=bool)
+    if (np.abs(x[discrete]-np.rint(x[discrete]))>1e-4).any():
+        raise RuntimeError('Nonintegral solution returned')
+    schedule=[]
+    for i,choices_i in enumerate(choices_by_launch):
+        selected=[(p,j) for (p,j),col in choices_i.items() if x[col]>0.5]
+        if not selected:continue
+        p,j=selected[0]
+        slot=next(k for k,col in enumerate(slots[i]) if x[col]>0.5)
+        t=float(x[times[i]])
+        schedule.append((slot+1,p+1,available[j],phases[p][2],t,t+hours[j]))
+    validate_launch_rate([r[4] for r in schedule],limit)
+    return result, schedule, {rid:int(round(x[col])) for rid,col in crafts.items()}, [int(round(x[col])) for col in blocks]
+
+
 def solve(args):
     target=getattr(args, 'target', TARGET)
     base=Path(args.data_dir)
@@ -257,36 +376,61 @@ def solve(args):
     goal_rid=next((rid for rid,_ in groups if outputs[rid]==target),None)
     if goal_rid is None:raise ValueError('Missing final crafting recipe')
     obj=np.zeros(n);obj[ridcol[goal_rid]]=-1
-    result=milp(obj,integrality=integrality,bounds=Bounds(low,up),constraints=constraints,
-                options={'time_limit':args.solver_seconds,'mip_rel_gap':0.0})
-    if result.x is None:raise RuntimeError('No feasible solution returned: '+result.message)
-    x=result.x
-    if np.max(np.abs(x[:count_size+last_size]-np.rint(x[:count_size+last_size])))>1e-4:
-        raise RuntimeError('Nonintegral solution returned')
-    x[:count_size+last_size]=np.rint(x[:count_size+last_size]);x[recipes_offset:]=np.rint(x[recipes_offset:])
-    detail=[];schedule=[]
-    for slot in range(slots):
-        actual_time=0.
-        for p,(a,b,boost) in enumerate(phases):
-            counts=[int(x[count(slot,p,j)]) for j in range(ns)]
-            end_j=next((j for j in range(ns) if x[last(slot,p,j)]>0.5),None)
-            actual_time=max(actual_time,a)
-            for j,num in enumerate(counts):
-                for z in range(num-(1 if end_j==j else 0)):
-                    schedule.append((slot+1,p+1,available[j],boost,actual_time,actual_time+hours[j]))
-                    actual_time+=hours[j]
-            if end_j is not None:
-                schedule.append((slot+1,p+1,available[end_j],boost,actual_time,actual_time+hours[end_j]))
-                actual_time+=hours[end_j]
-            for j,num in enumerate(counts):
-                if num:detail.append({'slot':slot+1,'phase':p+1,'ship':available[j],'event_bonus':boost,'launches':num,
-                                       'total_hours':num*hours[j], 'total_fuel_T':num*fuel_sum[j],
-                                       **{f+'_T':num*fuel[j,k] for k,f in enumerate(FUELS)}})
+    launch_limit=getattr(args,'max_launches_per_hour',0)
+    if launch_limit < 0:
+        raise ValueError('Maximum launches per hour must be a nonnegative integer')
+    if launch_limit:
+        result,schedule,craft_counts,fuel_blocks=solve_timed_launches(
+            args,available,hours,fuel,phases,mats,groups,outputs,inventory,rate,target)
+        x=np.zeros(n)
+        for slot,p,ship,boost,t,end in schedule:
+            x[count(slot-1,p-1,available.index(ship))]+=1
+        for rid,value in craft_counts.items():x[ridcol[rid]]=value
+        for k,value in enumerate(fuel_blocks):x[block(k)]=value
+        detail=[]
+        for slot in range(slots):
+            for p,(_,_,boost) in enumerate(phases):
+                for j,ship in enumerate(available):
+                    num=int(x[count(slot,p,j)])
+                    if num:detail.append({'slot':slot+1,'phase':p+1,'ship':ship,'event_bonus':boost,'launches':num,
+                        'total_hours':num*hours[j],'total_fuel_T':num*fuel_sum[j],
+                        **{f+'_T':num*fuel[j,k] for k,f in enumerate(FUELS)}})
+    else:
+        result=milp(obj,integrality=integrality,bounds=Bounds(low,up),constraints=constraints,
+                    options={'time_limit':args.solver_seconds,'mip_rel_gap':0.0})
+        if result.x is None:raise RuntimeError('No feasible solution returned: '+result.message)
+        x=result.x
+        if np.max(np.abs(x[:count_size+last_size]-np.rint(x[:count_size+last_size])))>1e-4:
+            raise RuntimeError('Nonintegral solution returned')
+        x[:count_size+last_size]=np.rint(x[:count_size+last_size]);x[recipes_offset:]=np.rint(x[recipes_offset:])
+        detail=[];schedule=[]
+        for slot in range(slots):
+            actual_time=0.
+            for p,(a,b,boost) in enumerate(phases):
+                counts=[int(x[count(slot,p,j)]) for j in range(ns)]
+                end_j=next((j for j in range(ns) if x[last(slot,p,j)]>0.5),None)
+                actual_time=max(actual_time,a)
+                for j,num in enumerate(counts):
+                    for z in range(num-(1 if end_j==j else 0)):
+                        schedule.append((slot+1,p+1,available[j],boost,actual_time,actual_time+hours[j]))
+                        actual_time+=hours[j]
+                if end_j is not None:
+                    schedule.append((slot+1,p+1,available[end_j],boost,actual_time,actual_time+hours[end_j]))
+                    actual_time+=hours[end_j]
+                for j,num in enumerate(counts):
+                    if num:detail.append({'slot':slot+1,'phase':p+1,'ship':available[j],'event_bonus':boost,'launches':num,
+                                           'total_hours':num*hours[j], 'total_fuel_T':num*fuel_sum[j],
+                                           **{f+'_T':num*fuel[j,k] for k,f in enumerate(FUELS)}})
     schedule_df=pd.DataFrame(schedule,columns=['slot','phase','ship','event_bonus','start_hour','end_hour'])
     for row in schedule_df.itertuples():
         a,b,boost=phases[row.phase-1]
         if not a-1e-5<=row.start_hour<b+1e-5 or row.end_hour>H+1e-5:
             raise RuntimeError(f'Schedule validation failed: {row}')
+    validate_launch_rate(schedule_df.start_hour,launch_limit)
+    for _,lane in schedule_df.groupby('slot'):
+        lane=lane.sort_values('start_hour')
+        if (lane.start_hour.to_numpy()[1:] < lane.end_hour.to_numpy()[:-1]-1e-7).any():
+            raise RuntimeError('Schedule validation failed: overlapping missions')
     craft=pd.DataFrame([{'material_id':outputs[rid],'crafts':int(x[ridcol[rid]])} for rid,_ in groups if x[ridcol[rid]]>0.5], columns=['material_id','crafts'])
     balance=[]
     for mat in mats:
@@ -317,7 +461,7 @@ def solve(args):
         print(f'Launch blackouts: {len(sleeps)} window(s)')
     if args.output_dir:
         out=Path(args.output_dir);out.mkdir(parents=True,exist_ok=True)
-        (out/'plan_metadata.json').write_text(json.dumps({'target':target,'missing_drop_materials':missing_rates,'unknown_drop_materials':unknown_rates},indent=2)+'\n',encoding='utf-8')
+        (out/'plan_metadata.json').write_text(json.dumps({'target':target,'missing_drop_materials':missing_rates,'unknown_drop_materials':unknown_rates,'max_launches_per_hour':launch_limit},indent=2)+'\n',encoding='utf-8')
         plan.to_csv(out/'launch_plan.csv',index=False)
         fuel_allocation.to_csv(out/'fuel_allocation.csv',index=False)
         schedule_df.to_csv(out/'schedule.csv',index=False)
@@ -335,6 +479,7 @@ def solve(args):
 
 def main():
     p=argparse.ArgumentParser(description='Optimize Reggference expected crafting across multiple events')
+    p.add_argument('--max-launches-per-hour',type=int,default=0,help='Maximum launches across all slots per rolling hour; 0 is unlimited')
     p.add_argument('--target',default=TARGET,help='Craftable material ID from the recipe CSV')
     p.add_argument('--inventory',type=Path,help='CSV of material_id,quantity starting whole-item counts')
     p.add_argument('--days',type=float,default=30)
@@ -354,7 +499,7 @@ def main():
     p.add_argument('--output-dir',default='results')
     p.add_argument('--solver-seconds',type=float,default=30)
     a=p.parse_args()
-    if a.days<=0 or a.fuel<0 or a.fuel_step<=0 or a.parallel<1 or a.events<0 or a.event_hours<=0 or a.event_multiplier<1:p.error('Invalid arguments')
+    if a.days<=0 or a.fuel<0 or a.fuel_step<=0 or a.parallel<1 or a.events<0 or a.event_hours<=0 or a.event_multiplier<1 or a.max_launches_per_hour<0:p.error('Invalid arguments')
     try:
         solve(a)
     except ValueError as exc:

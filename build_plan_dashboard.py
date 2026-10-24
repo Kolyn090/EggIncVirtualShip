@@ -41,7 +41,7 @@ TEMPLATE = r'''<!doctype html>
 .table-panel thead th{position:sticky;top:0;z-index:3;background:#17263c;box-shadow:inset 0 -1px 0 var(--border);background-clip:padding-box}
 .table-panel tbody td{background:var(--panel)}
 </style></head><body><main>
-<header class="head"><div><div class="eyebrow">Mission optimization / expected drops</div><h1 id="targetTitle">Crafting plan</h1><p>Understand launches, event bonuses, crafting, and remaining materials at a glance.</p></div><div class="tag" id="horizon"></div></header>
+<header class="head"><div><div class="eyebrow">Mission optimization / expected drops</div><h1 id="targetTitle">Crafting plan</h1><p>Understand launches, event bonuses, crafting, and remaining materials at a glance.</p></div><div><div class="tag" id="horizon"></div><div class="tag" id="launchLimit"></div></div></header>
 <section class="stats"><div class="stat"><div class="k">Total achievable target items</div><strong id="craftTotal">—</strong><small id="inventorySummary"></small></div><div class="stat"><div class="k">Total launches</div><strong id="launchTotal">—</strong><small id="boostTotal"></small></div><div class="stat"><div class="k">Fuel consumed</div><strong id="fuelTotal">—</strong><small>Combined four virtues, trillion units</small></div><div class="stat"><div class="k">Mission slots</div><strong id="slotTotal">—</strong><small id="eventTotal"></small></div></section>
 <div class="section"><div><h2>Recommended ships</h2><small>Grouped across all three slots and planning phases</small></div><div class="filters"><input id="search" placeholder="Filter ship names" aria-label="Filter ships"><select id="boostFilter" aria-label="Filter launches"><option value="all">All launches</option><option value="boost">Boosted only</option><option value="normal">Regular only</option></select></div></div>
 <div id="ships" class="shipgrid"></div>
@@ -55,6 +55,7 @@ TEMPLATE = r'''<!doctype html>
 <p class="foot">This plan uses expected drops, not guaranteed inventory. Events are hypothetical windows chosen by the optimizer. An optimal MILP solution can have alternative equally optimal schedules.</p>
 </main><script>
 const data=/*__DATA__*/;
+document.getElementById('launchLimit').textContent=data.metadata?.max_launches_per_hour ? `Launch limit: ${data.metadata.max_launches_per_hour} per rolling hour` : 'Launch limit: unlimited';
 const targetId=data.metadata?.target||'metronome-4';
 const targetName=({'metronome-4':'Reggference Quantum Metronome','ankh-4':'Brilliant Tungsten Ankh'})[targetId]||targetId;
 document.title=targetName+' • Mission Plan';

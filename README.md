@@ -90,3 +90,32 @@ A feasible time-limited solution is explicitly reported as uncertified.
 Currently, `titanium-bar-3` and `titanium-ore-3` have no ship drop rows.
 Their crafting chain is limited to owned inventory. Existing ankh and meteorite
 drop rows remain usable, so ankh plans can still be feasible.
+
+### Rolling launch limit
+
+```sh
+./run_optimizer.sh --max-launches-per-hour 2
+.venv/bin/python optimize_reggference.py --max-launches-per-hour 2 --days 3
+./run_optimizer.sh --max-launches-per-hour 0
+```
+
+The Python CLI defaults to `0` (unlimited, preserving the original model).
+The runner configuration defaults to `MAX_LAUNCHES_PER_HOUR=2`. Only launches
+count, across all slots combined; returns do not count. Windows are half-open:
+launches at 08:00 and 09:00 are exactly an hour apart and can reuse capacity.
+The limit is rolling, including across wake-up and event boundaries.
+
+A positive limit uses an individual-launch, continuous-time MILP. It jointly
+chooses launch times, ships, slots, and event phases, alongside crafting and
+fuel allocation. Sorted launch times satisfy `t[i + limit] >= t[i] + 1 hour`.
+Slot-ready times prevent overlapping missions. Exported times come directly
+from the solver, without shifting or rounding; an independent validator checks
+the rolling rule and slot overlap before export (numerical tolerance 1e-7 hours).
+The dashboard and `plan_metadata.json` record the configured limit.
+
+This formulation is larger than the unlimited aggregate model, especially for
+long horizons and many sleep/event phases. Use a shorter horizon or `--ships`
+to reduce model size when necessary. A time limit can leave an uncertified
+feasible solution or no solution; the optimizer reports either explicitly.
+No launches is normally feasible, even if no new target can be crafted.
+The existing one-second guard before event/sleep phase ends is retained.

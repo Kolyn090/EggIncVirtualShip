@@ -1,6 +1,7 @@
 import csv
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -13,7 +14,7 @@ class RunnerTests(unittest.TestCase):
     def test_arguments_paths_overrides_and_exit_status(self):
         with tempfile.TemporaryDirectory(prefix='optimizer space ') as directory:
             root=Path(directory)
-            script=(ROOT/'run_optimizer.sh').read_text().replace('SLEEP_WINDOWS=("23:00-08:00")','SLEEP_WINDOWS=("23:00-08:00" "12:00-13:00")').replace('NO_LAUNCH_WINDOWS=()','NO_LAUNCH_WINDOWS=("2-3" "4-5")')
+            script=re.sub(r'^SLEEP_WINDOWS=.*$', 'SLEEP_WINDOWS=("23:00-08:00" "12:00-13:00")', (ROOT/'run_optimizer.sh').read_text(), flags=re.MULTILINE).replace('NO_LAUNCH_WINDOWS=()','NO_LAUNCH_WINDOWS=("2-3" "4-5")')
             (root/'run_optimizer.sh').write_text(script)
             (root/'.venv/bin').mkdir(parents=True)
             fake=root/'.venv/bin/python'

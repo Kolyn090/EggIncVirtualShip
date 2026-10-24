@@ -6,6 +6,8 @@ TARGET="metronome-4" # Any craftable material ID, e.g. ankh-4
 DAYS=70
 FUEL=500
 PARALLEL=3
+# Maximum launches within any rolling 60-minute window; 0 is unlimited
+MAX_LAUNCHES_PER_HOUR=2
 EVENTS=2
 EVENT_HOURS=48
 EVENT_MULTIPLIER=2
@@ -41,7 +43,7 @@ for ((i=0; i<${#OVERRIDES[@]}; i++)); do
 done
 ARGS=(--target "$TARGET" --days "$DAYS" --fuel "$FUEL" --parallel "$PARALLEL"
       --events "$EVENTS" --event-hours "$EVENT_HOURS" --event-multiplier "$EVENT_MULTIPLIER"
-      --fuel-step "$FUEL_STEP" --output-dir "$OUTPUT_DIR/$EFFECTIVE_TARGET"
+      --max-launches-per-hour "$MAX_LAUNCHES_PER_HOUR" --fuel-step "$FUEL_STEP" --output-dir "$OUTPUT_DIR/$EFFECTIVE_TARGET"
       --solver-seconds "$SOLVER_SECONDS")
 if [[ -n "$INVENTORY_FILE" ]]; then ARGS+=(--inventory "$INVENTORY_FILE"); fi
 # Bash 3.2 with nounset requires the guarded expansion for empty arrays.
