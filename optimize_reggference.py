@@ -3,6 +3,7 @@
 Events are hypothetical, evenly spaced in the horizon; all rates are expectations.
 """
 import argparse
+import csv
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -13,6 +14,38 @@ from scipy.sparse import lil_matrix
 
 FUELS=('curiousity','kindness','resilence','integrity')
 TARGET='metronome-4'
+
+def load_inventory(path, known_materials):
+    """Read actual, whole-item counts separately from probabilistic drops."""
+    if path is None:
+        return {}
+    inventory = {}
+    try:
+        with Path(path).open(encoding='utf-8-sig', newline='') as stream:
+            reader = csv.reader(stream, strict=True)
+            header = next(reader, None)
+            if header is None or sorted(header) != ['material_id', 'quantity']:
+                raise ValueError('Inventory CSV must have exactly material_id,quantity columns')
+            for row in reader:
+                line = reader.line_num
+                if len(row) != 2:
+                    raise ValueError(f'Inventory CSV line {line}: expected two fields')
+                values = dict(zip(header, row))
+                material = values['material_id'].strip()
+                quantity = values['quantity'].strip()
+                if material not in known_materials:
+                    raise ValueError(f'Inventory CSV line {line}: unknown material {material!r}')
+                if material in inventory:
+                    raise ValueError(f'Inventory CSV line {line}: duplicate material {material!r}')
+                if not re.fullmatch(r'[0-9]+', quantity):
+                    raise ValueError(f'Inventory CSV line {line}: quantity must be a nonnegative integer')
+                count = int(quantity)
+                if count > 2**53 - 1:
+                    raise ValueError(f'Inventory CSV line {line}: quantity exceeds supported maximum {2**53 - 1}')
+                inventory[material] = count
+    except (OSError, UnicodeError, csv.Error) as exc:
+        raise ValueError(f'Cannot read inventory CSV: {exc}') from exc
+    return inventory
 
 def duration_hours(v):
     s=str(v).strip()
@@ -92,6 +125,8 @@ def solve(args):
     mission=pd.read_csv(base/'mission.csv').set_index('ship')
     drops=pd.read_csv(base/args.expectations)
     recipes=pd.read_csv(base/'reggference.csv')
+    known_materials=set(recipes.result)|set(recipes.ingredient)|set(drops.material_id)
+    inventory=load_inventory(getattr(args, 'inventory', None), known_materials)
     groups=list(recipes.groupby('recipe_id',sort=False))
     outputs={rid:g.result.iloc[0] for rid,g in groups}
     if len(set(outputs.values()))!=len(outputs):raise ValueError('Alternative recipes not supported')
@@ -107,7 +142,7 @@ def solve(args):
         expanded=mats|set(recipes.loc[recipes.result.isin(mats),'ingredient'])
         if expanded==mats:break
         mats=expanded
-    mats=sorted(mats)
+    mats=sorted(mats|set(inventory))
     drops=drops[drops.ship.isin(available)&drops.material_id.isin(mats)].copy()
     drops['expectation_per_launch']=pd.to_numeric(drops.expectation_per_launch,errors='coerce').fillna(0)
     if drops.duplicated(['ship','material_id']).any():raise ValueError('Duplicate rates')
@@ -147,7 +182,7 @@ def solve(args):
             if outputs[rid]==mat:row[ridcol[rid]]-=1
             for r in g.itertuples():
                 if r.ingredient==mat:row[ridcol[rid]]+=float(r.quantity)
-        constraint(row,hi=0)
+        constraint(row,hi=inventory.get(mat,0))
     # Each fuel kind must be provisioned in whole 5T (or --fuel-step) blocks.
     # Individual launches still use their actual fractional-T costs.
     for k,kind in enumerate(FUELS):
@@ -239,18 +274,20 @@ def solve(args):
         a,b,boost=phases[row.phase-1]
         if not a-1e-5<=row.start_hour<b+1e-5 or row.end_hour>H+1e-5:
             raise RuntimeError(f'Schedule validation failed: {row}')
-    craft=pd.DataFrame([{'material_id':outputs[rid],'crafts':int(x[ridcol[rid]])} for rid,_ in groups if x[ridcol[rid]]>0.5])
+    craft=pd.DataFrame([{'material_id':outputs[rid],'crafts':int(x[ridcol[rid]])} for rid,_ in groups if x[ridcol[rid]]>0.5], columns=['material_id','crafts'])
     balance=[]
     for mat in mats:
         source=sum(int(x[count(slot,p,j)])*rate.get((ship,mat),0)*(args.event_multiplier if boost else 1)
                    for slot in range(slots) for p,(_,_,boost) in enumerate(phases) for j,ship in enumerate(available))
         made=sum(int(x[ridcol[rid]]) for rid,g in groups if outputs[rid]==mat)
         used=sum(int(x[ridcol[rid]])*float(r.quantity) for rid,g in groups for r in g.itertuples() if r.ingredient==mat)
-        balance.append({'material_id':mat,'expected_drops':source,'crafted':made,'consumed':used,'expected_remaining':source+made-used})
-    plan=pd.DataFrame(detail);balance_df=pd.DataFrame(balance)
+        balance.append({'material_id':mat,'expected_drops':source,'crafted':made,'consumed':used,'expected_remaining':inventory.get(mat,0)+source+made-used,'starting_inventory':inventory.get(mat,0)})
+    plan=pd.DataFrame(detail, columns=['slot','phase','ship','event_bonus','launches','total_hours','total_fuel_T']+[f+'_T' for f in FUELS]);balance_df=pd.DataFrame(balance)
     print('MILP status:',result.message)
     if result.status!=0:print('WARNING: Solution not certified globally optimal within time limit')
     print(f'Expected {TARGET} crafts: {int(x[ridcol[goal_rid]])}')
+    print(f'Already owned {TARGET}: {inventory.get(TARGET,0)}')
+    print(f'Total achievable {TARGET}: {inventory.get(TARGET,0)+int(x[ridcol[goal_rid]])}')
     print(f'Fuel used: {plan.total_fuel_T.sum() if len(plan) else 0:.3f} / {args.fuel:g} T')
     fuel_allocation = pd.DataFrame([{'fuel':kind, 'used_T':sum(int(x[count(slot,p,j)])*fuel[j,k]
         for slot in range(slots) for p in range(np_) for j in range(ns)),
@@ -284,6 +321,7 @@ def solve(args):
 
 def main():
     p=argparse.ArgumentParser(description='Optimize Reggference expected crafting across multiple events')
+    p.add_argument('--inventory',type=Path,help='CSV of material_id,quantity starting whole-item counts')
     p.add_argument('--days',type=float,default=30)
     p.add_argument('--fuel',type=float,default=500)
     p.add_argument('--fuel-step',type=float,default=5,help='Each fuel type is allocated in blocks of this many T')
@@ -302,5 +340,8 @@ def main():
     p.add_argument('--solver-seconds',type=float,default=30)
     a=p.parse_args()
     if a.days<=0 or a.fuel<0 or a.fuel_step<=0 or a.parallel<1 or a.events<0 or a.event_hours<=0 or a.event_multiplier<1:p.error('Invalid arguments')
-    solve(a)
+    try:
+        solve(a)
+    except ValueError as exc:
+        p.error(str(exc))
 if __name__=='__main__':main()
