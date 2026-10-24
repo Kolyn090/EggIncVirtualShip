@@ -17,6 +17,7 @@ NO_LAUNCH_WINDOWS=()
 INVENTORY_FILE="data/inventory.csv" # Empty string disables inventory
 OUTPUT_DIR="results" # Base directory; selected target is appended
 SOLVER_SECONDS=120
+POLISH_SECONDS=10 # Additional budget for fuel and schedule quality
 VERBOSE_SOLVER=false # Enable HiGHS progress output
 OPEN_DASHBOARD=false # Set true to open on macOS after success
 # ===== END CONFIGURATION =====
@@ -45,7 +46,7 @@ done
 ARGS=(--target "$TARGET" --days "$DAYS" --fuel "$FUEL" --parallel "$PARALLEL"
       --events "$EVENTS" --event-hours "$EVENT_HOURS" --event-multiplier "$EVENT_MULTIPLIER"
       --max-launches-per-hour "$MAX_LAUNCHES_PER_HOUR" --fuel-step "$FUEL_STEP" --output-dir "$OUTPUT_DIR/$EFFECTIVE_TARGET"
-      --solver-seconds "$SOLVER_SECONDS")
+      --solver-seconds "$SOLVER_SECONDS" --polish-seconds "$POLISH_SECONDS")
 if [[ -n "$INVENTORY_FILE" ]]; then ARGS+=(--inventory "$INVENTORY_FILE"); fi
 # Bash 3.2 with nounset requires the guarded expansion for empty arrays.
 for window in ${SLEEP_WINDOWS[@]+"${SLEEP_WINDOWS[@]}"}; do ARGS+=(--sleep "$window"); done

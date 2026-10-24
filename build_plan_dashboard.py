@@ -4,6 +4,7 @@ import argparse
 import csv
 import json
 from pathlib import Path
+from schedule_validation import validate_schedule
 
 REQUIRED = ('launch_plan.csv', 'schedule.csv', 'craft_plan.csv', 'material_balance.csv', 'event_windows.csv')
 
@@ -11,14 +12,49 @@ def read_rows(path):
     with path.open(encoding='utf-8-sig', newline='') as f:
         return list(csv.DictReader(f))
 
+def describe_gap(start, end, restrictions, events=(), next_boost=False):
+    """Partition a gap into disjoint intervals; never classify by any overlap."""
+    points={start,end}
+    for window in [*restrictions,*events]:
+        a=float(window['start_hour']);b=float(window['end_hour'])
+        if a<end and b>start:points.update([max(a,start),min(b,end)])
+    next_event=next((float(w['start_hour']) for w in events
+                     if float(w['start_hour'])<=end<float(w['end_hour'])),None) if next_boost else None
+    segments=[];totals={}
+    for a,b in zip(sorted(points),sorted(points)[1:]):
+        if b-a<=1e-8:continue
+        mid=(a+b)/2
+        kinds=sorted({w.get('kind','unclassified-blackout') for w in restrictions
+                      if float(w['start_hour'])<=mid<float(w['end_hour'])})
+        kind='+'.join(kinds) if kinds else ('event-wait' if next_event is not None and mid<next_event else 'idle')
+        totals[kind]=totals.get(kind,0.)+b-a
+        if segments and segments[-1]['kind']==kind:segments[-1]['end_hour']=b
+        else:segments.append({'start_hour':a,'end_hour':b,'kind':kind})
+    return {'start_hour':start,'end_hour':end,'hours':end-start,'segments':segments,'totals':totals}
+
+
 def build(results: Path, output: Path):
     missing = [n for n in REQUIRED if not (results / n).is_file()]
     if missing:
         raise SystemExit('Missing optimizer results: ' + ', '.join(missing) + f' in {results}')
     data = {n.replace('.csv',''):read_rows(results / n) for n in REQUIRED}
     data['sleep_windows'] = read_rows(results/'sleep_windows.csv') if (results/'sleep_windows.csv').exists() else []
+    detailed=results/'launch_restrictions.csv'
+    restrictions=read_rows(detailed) if detailed.exists() else [dict(w,kind='unclassified-blackout') for w in data['sleep_windows']]
+    data['launch_restrictions']=restrictions
+    events=[w for w in data['event_windows'] if str(w['event_bonus']).lower()=='true']
+    previous={}
+    for row in sorted(data['schedule'],key=lambda r:(float(r['start_hour']),int(r['slot']))):
+        slot=row['slot'];start=float(row['start_hour'])
+        if slot in previous and start>previous[slot]+1/60:
+            row['gap_before']=describe_gap(previous[slot],start,restrictions,events,str(row['event_bonus']).lower()=='true')
+        previous[slot]=float(row['end_hour'])
     metadata=results/'plan_metadata.json'
     data['metadata']=json.loads(metadata.read_text(encoding='utf-8')) if metadata.exists() else {'target':'metronome-4'}
+    validate_schedule(data['schedule'],int(data['metadata'].get('max_launches_per_hour',0)),
+                      data['metadata'].get('horizon_hours'),max_slots=data['metadata'].get('parallel'),
+                      event_windows=[(float(w['start_hour']),float(w['end_hour']),str(w['event_bonus']).lower()=='true') for w in data['event_windows']],
+                      blackouts=[(float(w['start_hour']),float(w['end_hour'])) for w in data['sleep_windows']])
     blob = json.dumps(data, ensure_ascii=False).replace('</', '<\\/')
     html = TEMPLATE.replace('/*__DATA__*/', blob)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -40,13 +76,14 @@ TEMPLATE = r'''<!doctype html>
 .table-panel thead{position:relative;z-index:2}
 .table-panel thead th{position:sticky;top:0;z-index:3;background:#17263c;box-shadow:inset 0 -1px 0 var(--border);background-clip:padding-box}
 .table-panel tbody td{background:var(--panel)}
+.gap-details{display:block;flex:0 0 150px;align-self:flex-start;max-height:240px;overflow:auto}.gap-details summary{cursor:pointer;padding:8px;min-height:70px}.gap-breakdown{text-align:left;max-height:170px;overflow:auto}.gap-breakdown ul{padding-left:16px}.gap-reason{display:block;padding:4px;border-left:3px solid #7091ab;margin:3px 0}.gap-reason.sleep{border-color:#b28dce;background:#2d2139}.gap-reason.no-launch{border-color:#e48d86;background:#3b2728}.gap-reason.event-wait{border-color:#e5b45d;background:#48371e}
 </style></head><body><main>
-<header class="head"><div><div class="eyebrow">Mission optimization / expected drops</div><h1 id="targetTitle">Crafting plan</h1><p>Understand launches, event bonuses, crafting, and remaining materials at a glance.</p></div><div><div class="tag" id="horizon"></div><div class="tag" id="launchLimit"></div></div></header>
+<header class="head"><div><div class="eyebrow">Mission optimization / expected drops</div><h1 id="targetTitle">Crafting plan</h1><p>Understand launches, event bonuses, crafting, and remaining materials at a glance.</p></div><div><div class="tag" id="horizon"></div><div class="tag" id="launchLimit"></div><div class="tag" id="planStatus"></div></div></header>
 <section class="stats"><div class="stat"><div class="k">Total achievable target items</div><strong id="craftTotal">—</strong><small id="inventorySummary"></small></div><div class="stat"><div class="k">Total launches</div><strong id="launchTotal">—</strong><small id="boostTotal"></small></div><div class="stat"><div class="k">Fuel consumed</div><strong id="fuelTotal">—</strong><small>Combined four virtues, trillion units</small></div><div class="stat"><div class="k">Mission slots</div><strong id="slotTotal">—</strong><small id="eventTotal"></small></div></section>
 <div class="section"><div><h2>Recommended ships</h2><small>Grouped across all three slots and planning phases</small></div><div class="filters"><input id="search" placeholder="Filter ship names" aria-label="Filter ships"><select id="boostFilter" aria-label="Filter launches"><option value="all">All launches</option><option value="boost">Boosted only</option><option value="normal">Regular only</option></select></div></div>
 <div id="ships" class="shipgrid"></div>
 <div class="section"><div><h2>Launch checklist</h2><small>Large clickable cells ordered by launch time within each slot. Click to mark done.</small></div><div class="filters"><span class="tag" id="doneCount">0 / 0 done</span><button class="button" id="jumpProgress" type="button">Jump to next launch ↗</button><select id="slotFilter" aria-label="Timeline slot"><option value="all">All slots</option></select><button class="button" id="exportProgress">Export progress</button><button class="button" id="importProgress">Import progress</button><input type="file" id="progressFile" accept="application/json,.json" hidden></div></div>
-<div class="panel timelinewrap"><div class="timeline-list" id="lanes"></div><div class="legend"><span><i class="swatch"></i>Normal</span><span><i class="swatch b"></i>2× capacity</span><span><i class="swatch done-swatch"></i>Done ✓</span><span><i class="swatch e"></i>Event</span><span><i class="swatch sleeping"></i>No launches (sleep)</span></div><p class="note">Cards show the correct launch order and start times, but widths are intentionally equal for readability (not proportional to mission duration). Missions may finish during sleep; only new launches are restricted. Completion is saved in this browser, and you can export/import your progress.</p></div>
+<div class="panel timelinewrap"><div class="timeline-list" id="lanes"></div><div class="legend"><span><i class="swatch"></i>Normal</span><span><i class="swatch b"></i>2× capacity</span><span><i class="swatch done-swatch"></i>Done ✓</span><span><i class="swatch e"></i>Event</span><span><i class="swatch sleeping"></i>Sleep</span><span>◇ Explicit no-launch</span><span>○ Idle / waiting</span><span>✦ Possible event wait</span></div><p class="note">Cards show the correct launch order and start times, but widths are intentionally equal for readability (not proportional to mission duration). Missions may finish during sleep; only new launches are restricted. Completion is saved in this browser, and you can export/import your progress.</p></div>
 <div class="twocol"><div><div class="section"><h2>Fuel breakdown</h2><small>Combined across all launches</small></div><div class="panel" id="fuelPanel"></div></div><div><div class="section"><h2>Crafting quantities</h2><small>Intermediate materials and final products</small></div><div class="panel" id="craftPanel"></div></div></div>
 <div class="section"><div><h2>Material balance</h2><small>Starting inventory, expected drops, crafts, consumption, and remaining quantities</small></div><input id="materialSearch" placeholder="Find a material" aria-label="Filter materials"></div>
 <div class="panel table-panel"><div class="tablewrap"><table><thead><tr><th>Material</th><th class="numeric">Starting inventory</th><th class="numeric">Expected drops</th><th class="numeric">Crafted</th><th class="numeric">Consumed</th><th class="numeric">Expected remaining</th></tr></thead><tbody id="materials"></tbody></table></div></div>
@@ -56,6 +93,8 @@ TEMPLATE = r'''<!doctype html>
 </main><script>
 const data=/*__DATA__*/;
 document.getElementById('launchLimit').textContent=data.metadata?.max_launches_per_hour ? `Launch limit: ${data.metadata.max_launches_per_hour} per rolling hour` : 'Launch limit: unlimited';
+const optimization=data.metadata?.optimization;
+document.getElementById('planStatus').textContent=optimization ? (optimization.status===0?'Craft maximum proven':'Feasible plan; craft maximum unproven') : 'Legacy plan: proof status unavailable';
 const targetId=data.metadata?.target||'metronome-4';
 const targetName=({'metronome-4':'Reggference Quantum Metronome','ankh-4':'Brilliant Tungsten Ankh'})[targetId]||targetId;
 document.title=targetName+' • Mission Plan';
@@ -91,19 +130,19 @@ document.getElementById('eventTotal').textContent=windows.length+' capacity even
 let filter='all',search='',slot='all';
 const filtered=r=>(!search||r.ship.toLowerCase().includes(search))&&(filter==='all'||(filter==='boost')===r.event_bonus);
 function renderShips(){let rows=plans.filter(filtered);let by={};for(const r of rows){let x=by[r.ship]??={name:r.ship,n:0,boost:0,fuel:0};x.n+=r.launches;if(r.event_bonus)x.boost+=r.launches;x.fuel+=num(r.total_fuel_T)}const arr=Object.values(by).sort((a,b)=>b.n-a.n);document.getElementById('ships').innerHTML=arr.length?arr.map(x=>`<article class="shipcard"><div class="name">${esc(x.name)}</div><div class="num">${fmt(x.n,0)} <span style="font-size:12px;color:var(--muted);font-weight:normal">launches</span></div><div class="mini"><span>Fuel ${fmt(x.fuel,3)}T</span><span>${x.boost?`${x.boost} boosted`: 'No event bonus'}</span></div></article>`).join(''):'<div class="empty">No matching ships.</div>'}
+function gapLabel(kind){return ({idle:'Idle / waiting','event-wait':'Possible capacity-event wait',sleep:'Sleep','no-launch':'Explicit no-launch','no-launch+sleep':'Sleep + explicit no-launch','unclassified-blackout':'Sleep / no-launch (legacy plan)'})[kind]||kind}
+function renderGap(g){
+ const totals=Object.entries(g.totals).map(([kind,h])=>`<span class="gap-reason ${esc(kind)}">${esc(gapLabel(kind))}: ${fmt(h,2)} h</span>`).join('');
+ const segments=g.segments.map(w=>`<li>${day(w.start_hour)} – ${day(w.end_hour)}: ${esc(gapLabel(w.kind))} (${fmt(w.end_hour-w.start_hour,2)} h)</li>`).join('');
+ return `<details class="lane-gap gap-details"><summary title="Gap since the previous actual mission in this slot">Gap ${fmt(g.hours,1)} h<br><small>Inspect breakdown</small></summary><div class="gap-breakdown">${totals}<p>${day(g.start_hour)} – ${day(g.end_hour)}</p><ul>${segments}</ul><small>Event waiting is a possibility, not proof that waiting was necessary.</small></div></details>`;
+}
 function drawTimeline(){
  const lanes=document.getElementById('lanes');
  lanes.innerHTML=slots.filter(s=>slot==='all'||Number(slot)===s).map(s=>{
   const all=sched.filter(r=>r.slot===s);const items=all.filter(filtered);
   const done=all.filter(r=>completed.has(missionKey(r))).length;
-  let lastEnd=null;
   const cells=items.map(r=>{
-   let gap='';
-   if(lastEnd!==null && r.start_hour-lastEnd>1/60){
-    const sleep=sleeps.some(w=>w.a<r.start_hour-1e-5 && w.b>lastEnd+1e-5);
-    gap=`<div class="lane-gap ${sleep?'sleep':''}" title="Idle between ${day(lastEnd)} and ${day(r.start_hour)}">${sleep?'☾ Sleep / no launch':'Idle'}<br>${fmt(r.start_hour-lastEnd,1)} h</div>`;
-   }
-   lastEnd=r.end_hour;
+   const gap=r.gap_before?renderGap(r.gap_before):'';
    const k=missionKey(r),checked=completed.has(k), t=`${r.ship}, Slot ${r.slot}. ${day(r.start_hour)} to ${day(r.end_hour)}${r.event_bonus?', double capacity':''}. Click to ${checked?'undo':'complete'}.`;
    return gap+`<button type="button" class="mission-cell ${r.event_bonus?'boost':''} ${checked?'done':''}" data-mission="${esc(k)}" aria-pressed="${checked}" title="${esc(t)}"><span class="mission-name">${esc(r.ship)}</span><span class="mission-time">Launch: ${day(r.start_hour)}<br>Finish: ${day(r.end_hour)}</span><span class="mission-flag">${checked?'✓ Completed':r.event_bonus?'✦ 2× capacity':'○ Not done'}</span></button>`;
   }).join('');

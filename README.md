@@ -166,3 +166,45 @@ unavailable; no fabricated zero gap is reported.
 See [the benchmark report](benchmarks/REPORT.md) for measurements and remaining
 performance limits. Tests include solver option forwarding, time-limit
 incumbent retention, fallback status, and failed-scheduling refinement.
+
+### Schedule quality and timeline gaps
+
+Craft count remains the primary objective. After finding a feasible craft count,
+secondary solves fix it exactly and optimize, in order: allocated fuel, actual
+fuel consumed (a tie-break within allocation), last mission completion time,
+earlier launches/phases, and mission count. No weighted tradeoff can reduce
+crafts to improve timing. Lower priorities stop if an earlier priority cannot
+be proved optimal within its budget; the best feasible incumbent is retained.
+Use `--polish-seconds 10` (default) for the additional shared improvement budget,
+or `--polish-seconds 0` to disable these secondary stages.
+
+For rate-limited plans, secondary stages operate on the selected continuous-time
+model's launch cap. Their scope and status are recorded in
+`optimization.secondary_stages` in `plan_metadata.json`; a local secondary
+optimum is not a claim of global fuel/timing optimality. Unlimited plans minimize
+completion time in the aggregate model and prefer earlier launch phases.
+A final timing LP compacts the fixed mission identities, phases, slots and global
+launch order, minimizing completion and then total start times. It preserves
+fuel, drops and crafts exactly and enforces slot overlap, event boundaries,
+blackouts and the global rolling launch limit. Times are exported from the
+optimization; the dashboard never adjusts them. Primary craft proof status is
+reported separately from these secondary subproblems, including time limits.
+
+Long idle periods can be valid: waiting for an event can improve expected drops
+and reduce required fuel. The dashboard now shows each gap as one compact,
+expandable card. Its disjoint segments distinguish sleep, explicit no-launch,
+available idle/waiting, and possible event waiting. Event waiting is qualified
+because a chart alone cannot prove the wait is mathematically necessary.
+Overlapping sleep and explicit restrictions are shown together, without counting
+any part of the gap twice. Filtered-out missions are never treated as idle time.
+
+`launch_restrictions.csv` retains separate sleep and explicit interval labels;
+`sleep_windows.csv` remains the compatible merged blackout export. Legacy plans
+use “Sleep / no-launch (legacy plan)” for only the actual blackout portions,
+since their original combined CSV cannot identify the individual sources.
+Optimizer export and dashboard generation both validate rolling launch rates,
+slot availability, event eligibility, finite timestamps, horizon and blackouts;
+the optimizer additionally checks each ship's duration against mission data.
+
+See [the schedule investigation](benchmarks/SCHEDULE_QUALITY.md) for concrete
+before/after results and the distinction between necessary and arbitrary waits.
