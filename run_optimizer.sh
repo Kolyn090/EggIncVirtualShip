@@ -3,13 +3,13 @@ set -euo pipefail
 
 # ===== OPTIMIZER CONFIGURATION =====
 OPTIMIZATION_MODE="max-crafts" # balanced retains launch/fuel/completion priorities
-TARGET="ankh-4" # Any craftable material ID, e.g. ankh-4, metronome-4
+TARGET="metronome-4" # Any craftable material ID, e.g. ankh-4, metronome-4
 DAYS=30
 FUEL=500
 PARALLEL=3
 # Maximum launches PER SHIP SLOT within any rolling 60-minute window; 0 is unlimited
 MAX_LAUNCHES_PER_HOUR=2
-MAX_TOTAL_LAUNCHES=40 # All slots combined; 0 is unlimited
+MAX_TOTAL_LAUNCHES=360 # All slots combined; 0 is unlimited
 MAX_LAUNCHES_PER_DAY=0 # Per planning day across all slots; 0 is unlimited
 EVENTS=1
 EVENT_HOURS=48
