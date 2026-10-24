@@ -37,6 +37,34 @@ Run the tests with:
 python -m unittest discover -s tests -v
 ```
 
+### wasmegg drop profiles and per-launch targeting
+
+The default expectation CSV is generated from wasmegg's observed loot profiles.
+The optimizer chooses each launch's artifact-family target together with its
+ship, time and slot; the dashboard and both launch CSVs display that choice.
+Recipes are discovered under `data/artifact-recipes/` for either crafting target.
+
+To regenerate, install Node 20+ and Git, then run:
+
+```sh
+npm ci
+node scripts/generate_ship_expectations.js
+npm test
+```
+
+The first run fetches a pinned shared wasmegg library into `.cache/`; subsequent
+runs reuse it. Configure stars and research in
+`data/ship_expectations_config.json` before regenerating. Defaults use maximum
+stars, FTL 60 and Zero-G 10. The original CSV is preserved in
+`data/ship_material_expectations.legacy.csv`.
+
+These are empirical means, not exact game probabilities. Missing/insufficient
+profiles are excluded; possible but unobserved drops remain explicitly unknown.
+The supplied ankh recipes differ from upstream in where titanium bars are
+consumed; they and inventory identifiers are preserved, with discrepancies
+recorded in generated metadata. See [the source, mapping and validation report](docs/WASMEGG_EXPECTATIONS.md)
+for original functions, assumptions, regeneration details and test results.
+
 ### Configurable runner and crafting targets
 
 On macOS (system Bash 3.2 or newer) or Linux, prepare Python 3.11+ dependencies:

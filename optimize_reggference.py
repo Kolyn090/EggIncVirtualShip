@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import Bounds, LinearConstraint
 from solver_backend import milp, backend_name
+from mission_profiles import load_recipes,expand_profiles,prune_dominated_options
 from scipy.sparse import lil_matrix
 from schedule_validation import validate_launch_rate, validate_schedule
 
@@ -506,7 +507,14 @@ def solve(args):
     if not (base/'mission.csv').exists() and (base/'data'/'mission.csv').exists():base=base/'data'
     mission=pd.read_csv(base/'mission.csv').set_index('ship')
     drops=pd.read_csv(base/args.expectations)
-    recipes=pd.read_csv(base/'reggference.csv')
+    recipes=load_recipes(base)
+    if args.ships:
+        requested=set(args.ships.split(','))
+        if requested-set(mission.index):raise ValueError('Unknown ships '+str(requested-set(mission.index)))
+        mission=mission.loc[[ship for ship in mission.index if ship in requested]]
+    mission,drops,profile_info=expand_profiles(mission,drops,base/args.expectations)
+    if profile_info['recipe_warnings']:
+        print('[Recipes] Supplied definitions differ from pinned wasmegg recipes; preserved as configured. See drop_profile_source.recipe_warnings in plan metadata.',flush=True)
     known_materials=set(recipes.result)|set(recipes.ingredient)|set(drops.material_id)
     inventory=load_inventory(getattr(args, 'inventory', None), known_materials)
     groups=list(recipes.groupby('recipe_id',sort=False))
@@ -514,10 +522,6 @@ def solve(args):
     if len(set(outputs.values()))!=len(outputs):raise ValueError('Alternative recipes not supported')
     if any(g.result.nunique()!=1 for _,g in groups):raise ValueError('Invalid recipes')
     available=[s for s in mission.index if s in set(drops.ship)]
-    if args.ships:
-        requested=set(args.ships.split(','))
-        if requested-set(mission.index):raise ValueError('Unknown ships '+str(requested-set(mission.index)))
-        available=[s for s in available if s in requested]
     if not available:raise ValueError('No usable ship rates')
     if target not in set(recipes.result):
         raise ValueError(f'Unknown crafting target {target!r}; choose from: '+', '.join(sorted(set(recipes.result))))
@@ -528,6 +532,10 @@ def solve(args):
         mats=expanded
     groups=[(rid,g) for rid,g in groups if outputs[rid] in mats]
     required_mats=set(mats)
+    consumed_materials=set(recipes.loc[recipes.result.isin(mats),'ingredient'])
+    original_options=len(available)
+    available=prune_dominated_options(available,mission,drops,consumed_materials)
+    print(f'[Profiles] {len(available)} useful nondominated mission options from {original_options}; unknown supply is uncredited',flush=True)
     mats=sorted(mats|set(inventory))
     drops=drops[drops.ship.isin(available)&drops.material_id.isin(mats)].copy()
     numeric_rates=pd.to_numeric(drops.expectation_per_launch,errors='coerce')
@@ -536,7 +544,7 @@ def solve(args):
     if missing_rates:
         print('No known ship drop rates (inventory/crafting only): '+', '.join(missing_rates))
     if unknown_rates:
-        print('Unknown drop rates treated as zero (not measured zero): '+', '.join(unknown_rates))
+        print('Unknown drop rates omitted from modeled supply (not measured zero): '+', '.join(unknown_rates))
     drops['expectation_per_launch']=pd.to_numeric(drops.expectation_per_launch,errors='coerce').fillna(0)
     if drops.duplicated(['ship','material_id']).any():raise ValueError('Duplicate rates')
     rate={(r.ship,r.material_id):float(r.expectation_per_launch) for r in drops.itertuples()}
@@ -551,7 +559,7 @@ def solve(args):
         raise ValueError('Mission fuel values must be explicit finite nonnegative numbers; missing fuel is not zero')
     if not np.isfinite(hours).all() or (hours<=0).any():raise ValueError('Mission durations must be finite and positive')
     fuel_sum=fuel.sum(axis=1)
-    zero_fuel_ships=[ship for ship,total in zip(available,fuel_sum) if total==0]
+    zero_fuel_ships=sorted({mission.loc[ship,'base_ship'] for ship,total in zip(available,fuel_sum) if total==0})
     if zero_fuel_ships:print('[Inputs] Explicit zero fuel in mission.csv: '+', '.join(zero_fuel_ships),flush=True)
     launch_limit=getattr(args,'max_launches_per_hour',0)
     needs_timed=bool(launch_limit and min(hours)*launch_limit<1)
@@ -903,9 +911,13 @@ def solve(args):
     completion=float(schedule_df.end_hour.max()) if len(schedule_df) else 0.
     guarantees=objective_guarantees(result,int(x[ridcol[goal_rid]]),float(fuel_allocation.allocated_T.sum()),completion)
     print(f'[Summary] Completion day {completion/24:.4f}; allocated fuel proven: {guarantees["allocated_fuel"]["proven"]}; completion proven: {guarantees["completion"]["proven"]}',flush=True)
+    schedule_df['target']=schedule_df.ship.map(lambda key:mission.loc[key,'drop_target'])
+    schedule_df['ship']=schedule_df.ship.map(lambda key:mission.loc[key,'base_ship'])
+    plan['target']=plan.ship.map(lambda key:mission.loc[key,'drop_target'])
+    plan['ship']=plan.ship.map(lambda key:mission.loc[key,'base_ship'])
     if args.output_dir:
         out=Path(args.output_dir);out.mkdir(parents=True,exist_ok=True)
-        (out/'plan_metadata.json').write_text(json.dumps({'target':target,'missing_drop_materials':missing_rates,'unknown_drop_materials':unknown_rates,'max_launches_per_hour':launch_limit,'launch_rate_scope':'per-slot','parallel':slots,'horizon_hours':H,'zero_fuel_ships':zero_fuel_ships,'optimization':{'status':int(result.status),'message':result.message,'gap':finite_or_none(getattr(result,'mip_gap',None)),'solver_runs':args.solver_runs,'upper_bound_crafts':getattr(result,'upper_bound_crafts',None),'secondary_stages':getattr(result,'secondary_stages',[]),'guarantees':guarantees,'removed_surplus_missions':removed_missions}},indent=2)+'\n',encoding='utf-8')
+        (out/'plan_metadata.json').write_text(json.dumps({'target':target,'missing_drop_materials':missing_rates,'unknown_drop_materials':unknown_rates,'max_launches_per_hour':launch_limit,'launch_rate_scope':'per-slot','parallel':slots,'horizon_hours':H,'zero_fuel_ships':zero_fuel_ships,'drop_profile_source':profile_info,'targeting_profile_names':profile_info['target_names'],'optimization':{'status':int(result.status),'message':result.message,'gap':finite_or_none(getattr(result,'mip_gap',None)),'solver_runs':args.solver_runs,'upper_bound_crafts':getattr(result,'upper_bound_crafts',None),'secondary_stages':getattr(result,'secondary_stages',[]),'guarantees':guarantees,'removed_surplus_missions':removed_missions}},indent=2)+'\n',encoding='utf-8')
         plan.to_csv(out/'launch_plan.csv',index=False)
         fuel_allocation.to_csv(out/'fuel_allocation.csv',index=False)
         schedule_df.to_csv(out/'schedule.csv',index=False)

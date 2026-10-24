@@ -1,0 +1,10 @@
+{
+  "name": "eggincvirtualship-expectations",
+  "private": true,
+  "engines": {"node": ">=20"},
+  "scripts": {
+    "generate:expectations": "node scripts/generate_ship_expectations.js",
+    "test": "node --test tests/expectations.test.js"
+  },
+  "dependencies": {"dayjs": "1.11.13", "esbuild": "0.25.12", "protobufjs": "7.5.4"}
+}
