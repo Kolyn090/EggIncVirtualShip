@@ -1,0 +1,100 @@
+
+Ancient puzzle cube
+ (T1)
+1.07/, 17.1/d
+
+Puzzle cube
+ (T2)
+1.65/, 26.5/d
+
+Basic lunar totem
+ (T1)
+1.30/, 20.9/d
+
+Lunar totem
+ (T2)
+0.306/, 4.89/d
+
+Simple Demeters necklace
+ (T1)
+1.93/, 30.8/d
+
+Jeweled Demeters necklace
+ (T2)
+0.565/, 9.04/d
+
+Tiny vial of Martian dust
+ (T1)
+2.64/, 42.2/d
+
+Plain Aurelian brooch
+ (T1)
+2.82/, 45.2/d
+
+Aurelian brooch
+ (T2)
+0.0113/, 0.181/d
+
+Crude tungsten ankh
+ (T1)
+2.98/, 47.6/d
+
+Plain gusset
+ (T1)
+3.17/, 50.7/d
+
+Weak neodymium medallion
+ (T1)
+0.876/, 14.0/d
+
+Misaligned Mercury's lens
+ (T1)
+0.405/, 6.48/d
+
+Dull beak of Midas
+ (T1)
+0.199/, 3.18/d
+
+Lunar stone fragment
+ (T1)
+1.30/, 20.8/d
+
+Lunar stone
+ (T2)
+0.0220/, 0.353/d
+
+Shell stone fragment
+ (T1)
+0.931/, 14.9/d
+
+Shell stone
+ (T2)
+0.120/, 1.92/d
+
+Tachyon stone fragment
+ (T1)
+0.527/, 8.44/d
+
+Tachyon stone
+ (T2)
+0.0564/, 0.903/d
+
+Soul stone fragment
+ (T1)
+0.00676/, 0.108/d
+
+Quantum stone fragment
+ (T1)
+0.0207/, 0.331/d
+
+Tiny gold meteorite
+ (T1)
+9.14/, ~146/d
+
+Tau Ceti geode piece
+ (T1)
+4.95/, 79.2/d
+
+Solar titanium ore
+ (T1)
+2.01/, 32.1/d

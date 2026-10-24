@@ -1,0 +1,12 @@
+recipe_id,result,ingredient,quantity
+1,metronome-2,metronome-1,5
+1,metronome-2,actuator-1,2
+2,metronome-3,metronome-2,7
+2,metronome-3,lens-3,4
+3,metronome-4,metronome-3,9
+3,metronome-4,geode-3,4
+4,lens-2,lens-1,6
+5,lens-3,lens-2,8
+5,lens-3,geode-2,2
+6,geode-2,geode-1,12
+7,geode-3,geode-2,14

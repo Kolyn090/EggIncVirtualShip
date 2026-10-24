@@ -1,0 +1,392 @@
+
+Mystical puzzle cube
+ (T3)
+2.51/, 1.57/d
+
+Unsolvable puzzle cube
+ (T4)
+0.991/, 0.619/d
+
+Powerful lunar totem
+ (T3)
+2.09/, 1.31/d
+
+Eggceptional lunar totem
+ (T4)
+1.20/, 0.747/d
+
+Pristine Demeters necklace
+ (T3)
+1.54/, 0.962/d
+
+Beggspoke Demeters necklace
+ (T4)
+2.76/, 1.73/d
+
+Vial of Martian dust
+ (T2)
+0.757/, 0.473/d
+
+Hermetic vial of Martian dust
+ (T3)
+2.97/, 1.86/d
+
+Prime vial of Martian dust
+ (T4)
+0.564/, 0.353/d
+
+Jeweled Aurelian brooch
+ (T3)
+2.47/, 1.54/d
+
+Eggceptional Aurelian brooch
+ (T4)
+2.02/, 1.26/d
+
+Tungsten ankh
+ (T2)
+0.842/, 0.527/d
+
+Polished tungsten ankh
+ (T3)
+3.38/, 2.11/d
+
+Brilliant tungsten ankh
+ (T4)
+0.882/, 0.551/d
+
+Ornate gusset
+ (T2)
+1.02/, 0.636/d
+
+Distegguished gusset
+ (T3)
+3.37/, 2.11/d
+
+Jeweled gusset
+ (T4)
+0.365/, 0.228/d
+
+Neodymium medallion
+ (T2)
+0.896/, 0.560/d
+
+Precise neodymium medallion
+ (T3)
+2.37/, 1.48/d
+
+Eggceptional neodymium medallion
+ (T4)
+2.02/, 1.26/d
+
+Mercury's lens
+ (T2)
+1.51/, 0.943/d
+
+Precise Mercury's lens
+ (T3)
+3.39/, 2.12/d
+
+Meggnificent Mercury's lens
+ (T4)
+0.165/, 0.103/d
+
+Beak of Midas
+ (T2)
+1.14/, 0.711/d
+
+Jeweled beak of Midas
+ (T3)
+3.34/, 2.09/d
+
+Glistening beak of Midas
+ (T4)
+1.27/, 0.793/d
+
+Carved rainstick
+ (T2)
+1.68/, 1.05/d
+
+Ornate carved rainstick
+ (T3)
+2.64/, 1.65/d
+
+Meggnificent carved rainstick
+ (T4)
+0.343/, 0.214/d
+
+Interstellar compass
+ (T2)
+1.60/, 1.00/d
+
+Precise interstellar compass
+ (T3)
+3.17/, 1.98/d
+
+Clairvoyant interstellar compass
+ (T4)
+0.333/, 0.208/d
+
+Plain chalice
+ (T1)
+0.873/, 0.545/d
+
+Polished chalice
+ (T2)
+1.57/, 0.981/d
+
+Jeweled chalice
+ (T3)
+3.44/, 2.15/d
+
+Eggceptional chalice
+ (T4)
+0.553/, 0.346/d
+
+Tattered phoenix feather
+ (T1)
+1.53/, 0.958/d
+
+Phoenix feather
+ (T2)
+2.31/, 1.45/d
+
+Brilliant phoenix feather
+ (T3)
+2.53/, 1.58/d
+
+Blazing phoenix feather
+ (T4)
+0.0895/, 0.0560/d
+
+Misaligned quantum metronome
+ (T1)
+1.94/, 1.21/d
+
+Adequate quantum metronome
+ (T2)
+2.78/, 1.74/d
+
+Perfect quantum metronome
+ (T3)
+1.93/, 1.21/d
+
+Reggference quantum metronome
+ (T4)
+0.0798/, 0.0499/d
+
+Dilithium monocle
+ (T1)
+2.16/, 1.35/d
+
+Precise dilithium monocle
+ (T2)
+2.89/, 1.81/d
+
+Eggsacting dilithium monocle
+ (T3)
+1.32/, 0.823/d
+
+Flawless dilithium monocle
+ (T4)
+0.0338/, 0.0211/d
+
+Inconsistent titanium actuator
+ (T1)
+2.23/, 1.40/d
+
+Titanium actuator
+ (T2)
+2.89/, 1.80/d
+
+Precise titanium actuator
+ (T3)
+1.36/, 0.848/d
+
+Reggference titanium actuator
+ (T4)
+0.140/, 0.0875/d
+
+Ship in a bottle
+ (T1)
+3.27/, 2.05/d
+
+Detailed ship in a bottle
+ (T2)
+2.79/, 1.75/d
+
+Complex ship in a bottle
+ (T3)
+0.918/, 0.574/d
+
+Eggquisite ship in a bottle
+ (T4)
+0.0197/, 0.0123/d
+
+Weak tachyon deflector
+ (T1)
+3.76/, 2.35/d
+
+Tachyon deflector
+ (T2)
+1.33/, 0.831/d
+
+Robust tachyon deflector
+ (T3)
+0.260/, 0.163/d
+
+Book of Basan
+ (T1)
+5.69/, 3.56/d
+
+Collectors book of Basan
+ (T2)
+0.916/, 0.573/d
+
+Fortified book of Basan
+ (T3)
+0.126/, 0.0786/d
+
+Dim light of Eggendil
+ (T1)
+5.71/, 3.57/d
+
+Shimmering light of Eggendil
+ (T2)
+1.82/, 1.14/d
+
+Glowing light of Eggendil
+ (T3)
+0.387/, 0.242/d
+
+Brilliant light of Eggendil
+ (T4)
+0.0014/, 0.00087/d
+
+Eggsquisite lunar stone
+ (T3)
+1.15/, 0.722/d
+
+Meggnificent lunar stone
+ (T4)
+0.146/, 0.0910/d
+
+Eggsquisite shell stone
+ (T3)
+1.00/, 0.627/d
+
+Flawless shell stone
+ (T4)
+0.193/, 0.121/d
+
+Eggsquisite tachyon stone
+ (T3)
+0.997/, 0.623/d
+
+Brilliant tachyon stone
+ (T4)
+0.0877/, 0.0548/d
+
+Terra stone
+ (T2)
+0.394/, 0.246/d
+
+Rich terra stone
+ (T3)
+1.31/, 0.822/d
+
+Eggceptional terra stone
+ (T4)
+0.0241/, 0.0151/d
+
+Soul stone
+ (T2)
+0.386/, 0.241/d
+
+Eggsquisite soul stone
+ (T3)
+0.641/, 0.401/d
+
+Radiant soul stone
+ (T4)
+0.0793/, 0.0496/d
+
+Dilithium stone
+ (T2)
+1.06/, 0.660/d
+
+Eggsquisite dilithium stone
+ (T3)
+0.728/, 0.455/d
+
+Quantum stone
+ (T2)
+0.515/, 0.322/d
+
+Phased quantum stone
+ (T3)
+1.22/, 0.765/d
+
+Meggnificent quantum stone
+ (T4)
+0.0994/, 0.0621/d
+
+Life stone
+ (T2)
+0.693/, 0.433/d
+
+Good life stone
+ (T3)
+0.944/, 0.590/d
+
+Eggceptional life stone
+ (T4)
+0.0144/, 0.00901/d
+
+Clarity stone fragment
+ (T1)
+3.49/, 2.18/d
+
+Clarity stone
+ (T2)
+1.00/, 0.625/d
+
+Eggsquisite clarity stone
+ (T3)
+0.169/, 0.105/d
+
+Prophecy stone fragment
+ (T1)
+3.86/, 2.41/d
+
+Prophecy stone
+ (T2)
+0.768/, 0.480/d
+
+Eggsquisite prophecy stone
+ (T3)
+0.0792/, 0.0495/d
+
+Enriched gold meteorite
+ (T2)
+10.3/, 6.44/d
+
+Solid gold meteorite
+ (T3)
+2.91/, 1.82/d
+
+Glimmering Tau Ceti geode
+ (T2)
+9.31/, 5.82/d
+
+Radiant Tau Ceti geode
+ (T3)
+0.762/, 0.476/d
+
+Solar titanium bar
+ (T2)
+6.19/, 3.87/d
+
+Solar titanium geogon
+ (T3)
+2.22/, 1.39/d

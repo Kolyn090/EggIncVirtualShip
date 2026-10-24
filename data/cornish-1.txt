@@ -1,0 +1,152 @@
+
+Puzzle cube
+ (T2)
+1.23/, 18.4/d
+
+Lunar totem
+ (T2)
+1.88/, 28.2/d
+
+Powerful lunar totem
+ (T3)
+0.00001
+?
+/, 0.0002
+?
+/d
+
+Jeweled Demeters necklace
+ (T2)
+1.82/, 27.3/d
+
+Tiny vial of Martian dust
+ (T1)
+0.941/, 14.1/d
+
+Vial of Martian dust
+ (T2)
+0.163/, 2.45/d
+
+Plain Aurelian brooch
+ (T1)
+1.17/, 17.5/d
+
+Aurelian brooch
+ (T2)
+1.38/, 20.7/d
+
+Crude tungsten ankh
+ (T1)
+1.33/, 19.9/d
+
+Tungsten ankh
+ (T2)
+0.0558/, 0.837/d
+
+Plain gusset
+ (T1)
+2.14/, 32.1/d
+
+Ornate gusset
+ (T2)
+0.0014/, 0.020/d
+
+Weak neodymium medallion
+ (T1)
+3.01/, 45.1/d
+
+Neodymium medallion
+ (T2)
+0.0574/, 0.861/d
+
+Misaligned Mercury's lens
+ (T1)
+3.50/, 52.4/d
+
+Dull beak of Midas
+ (T1)
+3.49/, 52.3/d
+
+Simple carved rainstick
+ (T1)
+0.810/, 12.1/d
+
+Miscalibrated interstellar compass
+ (T1)
+0.631/, 9.46/d
+
+Plain chalice
+ (T1)
+0.404/, 6.06/d
+
+Tattered phoenix feather
+ (T1)
+0.0548/, 0.822/d
+
+Misaligned quantum metronome
+ (T1)
+0.0012/, 0.019/d
+
+Lunar stone fragment
+ (T1)
+0.547/, 8.20/d
+
+Lunar stone
+ (T2)
+0.227/, 3.40/d
+
+Shell stone fragment
+ (T1)
+0.421/, 6.31/d
+
+Shell stone
+ (T2)
+0.192/, 2.88/d
+
+Tachyon stone fragment
+ (T1)
+0.954/, 14.3/d
+
+Tachyon stone
+ (T2)
+0.223/, 3.35/d
+
+Terra stone fragment
+ (T1)
+0.501/, 7.51/d
+
+Terra stone
+ (T2)
+0.00263/, 0.0394/d
+
+Soul stone fragment
+ (T1)
+0.841/, 12.6/d
+
+Soul stone
+ (T2)
+0.00276/, 0.0413/d
+
+Dilithium stone fragment
+ (T1)
+0.595/, 8.93/d
+
+Quantum stone fragment
+ (T1)
+0.981/, 14.7/d
+
+Life stone fragment
+ (T1)
+0.400/, 6.00/d
+
+Tiny gold meteorite
+ (T1)
+3.31/, 49.6/d
+
+Tau Ceti geode piece
+ (T1)
+5.16/, 77.4/d
+
+Solar titanium ore
+ (T1)
+6.60/, 99.0/d
