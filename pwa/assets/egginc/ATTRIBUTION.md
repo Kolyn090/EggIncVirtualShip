@@ -1,6 +1,6 @@
 # Egg, Inc. artwork provenance and rights
 
-The 44 PNG files in this directory are unmodified, full-color copies from:
+44 of the PNG files in this directory are unmodified, full-color copies from:
 
 - Repository: https://github.com/fanaticscripter/EggIncAssets
 - Revision: `075805d987ae55d74579abff3f75f9b28e84d5fc`
@@ -32,7 +32,14 @@ their material family: T4 artifacts/stones and T3 geodes, meteorites and solar
 titanium. Stone-fragment target profiles deliberately share their family's
 highest-tier stone artwork. Tier aliases change presentation only.
 
-The source has ten ship-family icons, no ship-level variants, and no Henliner
-icon at this revision. `chicken_1` and `chicken_9` are different ship families,
-not levels. Missing ships (including Henliner), unknown targets and untargeted
-missions keep readable text instead of substituting unrelated artwork.
+The upstream source has ten ship-family icons, no ship-level variants, and no
+Henliner icon at this revision. `chicken_1` and `chicken_9` are different ship
+families, not levels.
+
+The additional `afx_ship_atreggies.png` is the user-provided 64×64 Henliner
+artwork from this project's `image/afx_ship_atreggies.png`, not from the pinned
+EggIncAssets revision. It is copied byte-for-byte by the PWA build and its local
+source path and checksum are recorded separately in `manifest.json`. Existing
+artwork rights remain unchanged. Both `henliner` and `atreggies` identifiers use
+this artwork. Unknown ships/targets and untargeted missions retain readable
+text; failed image loads also fall back to text.

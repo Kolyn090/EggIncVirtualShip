@@ -36,7 +36,7 @@ If configuration fails because Pages is not enabled, select that source first
 and rerun the workflow. Repository/organization policy must permit Pages and
 the `github-pages` deployment environment.
 
-The workflow in `.github/workflows/deploy-pwa.yml` runs on changes to `pwa/**`,
+The workflow in `.github/workflows/deploy-pwa.yml` runs on changes to `pwa/**`, `image/**`,
 the dashboard bundler/source template, or the workflow itself. It regenerates
 the trusted template and content-based service-worker cache version, then
 uploads **only the contents of `pwa/`** as the Pages website root. It does not
@@ -124,7 +124,8 @@ Compact checklist cards show original full-color Egg, Inc. ship and target
 icons at 32px on mobile and 34px on desktop. The card background still conveys
 completion/event state; artwork keeps its original colors, including on hover.
 Mission numbers use the full plan's launch order, so filtering slots does not
-renumber them. Short/Std/Ext duration badges (full names in accessible labels), launch and finish times,
+renumber them. Compact **S** (Short, blue), **M** (Standard, purple), and **E**
+(Extended, orange) badges, launch and finish times,
 2× capacity labels and completion timestamps remain visible. Ship/target names
 are available through image alt text, the card's accessible label and tooltip,
 and the unchanged detailed schedule table.
@@ -137,25 +138,38 @@ targets also use their stone family's highest artwork. This is presentation
 only: no tier, quantity, mission identity, target or optimizer data is changed.
 
 Ship suffixes `-1/-2/-3` mean mission duration in optimizer data, not star level.
-The inspected source has one icon for each of ten ship families, with no level
-variants. It contains **no Henliner artwork**. Henliner, unknown ships/targets,
-untargeted missions and any failed image use readable text fallbacks rather
-than an unrelated icon or broken image. Newer ship artwork can be mapped when
-it becomes available from the specified source.
+The pinned upstream source has one icon for each of ten ship families, with no
+level variants. Henliner uses the additional local 64×64 artwork at
+`image/afx_ship_atreggies.png`, copied unchanged into the PWA during the build.
+Both `henliner-*` and `atreggies-*` identifiers map to it. The checklist, ship
+summary cards and detailed schedule display the same ship artwork and duration
+badge. Unknown ships/targets, untargeted missions and any failed image still
+use readable text fallbacks rather than unrelated artwork or a broken image.
 
-All 44 original PNGs, source filenames/checksums and provenance notice live in
+Badges are 18×18px with white letters: S uses blue `#2563eb`, M uses purple
+`#7c3aed`, and E uses orange `#c2410c`. Their full names remain in accessible
+labels and tooltips, including on yellow completed cards. Tutorial missions
+retain a neutral T badge. Badges are part of the existing clickable mission
+cell, not separate touch actions. Original ship IDs/duration values, scheduling,
+ordering and progress-backup identities are unchanged.
+
+All 45 original PNGs, source filenames/checksums and provenance notice live in
 [`pwa/assets/egginc/`](../pwa/assets/egginc/). The upstream repository contains
 no license or redistribution terms; its README says the assets were extracted
 from the Android app. See [artwork attribution and rights](../pwa/assets/egginc/ATTRIBUTION.md)
-for the exact notice and credits. The artwork is not represented as open-source
+for the exact notice and credits, including the separate local Henliner source.
+The artwork is not represented as open-source
 or relicensed under this project's software terms.
 
-The build verifies PNG checksums and generates `egginc-icons.mjs` with unchanged
+The build copies the local Henliner source, verifies PNG checksums and generates `egginc-icons.mjs` with unchanged
 PNG bytes as data URLs. Each frame receives only the artwork needed for its
 plan. No external image requests or frame CSP relaxation are needed. All
 bundled files, including raw PNGs and provenance, are precached locally and
 included in the content-based service-worker version. Installed apps refresh
 these assets on an online update without deleting their active plan/checklist.
+When updating the local Henliner image, update its recorded checksum in
+`pwa/assets/egginc/manifest.json`, run `npm run build:pwa`, and commit the source
+and generated files together. Production still serves only static `pwa/` assets.
 
 ## Progress backups
 
@@ -236,7 +250,7 @@ npx playwright install chromium
 PLAYWRIGHT_CHROMIUM_EXECUTABLE=/path/to/chromium npm run test:pwa
 ```
 
-Thirteen browser tests cover local import, auto-saving check and uncheck, normal
+Fourteen browser tests cover local import, auto-saving check and uncheck, normal
 reload, a full persistent-profile browser restart while offline, offline close
 and reimport, blocked replacement, cancellation/confirmed deletion, stale
 writes, concurrent windows, explicit progress backups, untrusted HTML,
@@ -249,6 +263,10 @@ desktop dimensions. Icon tests check correct filenames, accessible labels,
 stable mission numbers, unfiltered artwork in every completion/hover state,
 missing/failed image fallbacks, unchanged plan data and all raw PNGs available
 after a full browser restart offline. Tests also run at `/EggIncVirtualShip/`.
+Henliner coverage uses all three mission lengths, checks its local artwork and
+badge colors across checklist/summary/schedule, restores progress after reload,
+and verifies readable fallback when the Henliner image fails. The offline
+browser-restart test also restores Henliner icons and S/M/E badges.
 Eight PWA Node tests cover parsing, malformed input, data preservation, backup-key
 compatibility, script escaping, actual data-to-icon mappings, highest tiers,
 source/embedded byte checksums and complete service-worker asset coverage.
@@ -258,8 +276,8 @@ bundle exactly matches the existing dashboard design and behavior.
 Verified commands for this implementation:
 
 - `npm run build:pwa`
-- `npm run test:pwa` — 13 real Chromium browser tests passed.
-- `PWA_TEST_SUBPATH=1 npm run test:pwa` — same 13 tests at `/EggIncVirtualShip/`.
+- `npm run test:pwa` — 14 real Chromium browser tests passed.
+- `PWA_TEST_SUBPATH=1 npm run test:pwa` — same 14 tests at `/EggIncVirtualShip/`.
 - `npm test` — 17 Node tests passed, including the existing source-data tests.
 - `.venv/bin/python -m unittest discover -s tests -v` — 66 tests passed.
 

@@ -72,7 +72,7 @@ test('actual optimizer ship/target identifiers map to inspected highest-tier art
   const {iconCatalog} = await import('../pwa/egginc-icons.mjs');
   const expectations = fs.readFileSync(path.resolve(__dirname, '../data/ship_material_expectations.csv'), 'utf8').trim().split('\n').slice(1).map(line => line.split(','));
   const ships = new Set(expectations.map(row => row[0])), targets = new Set(expectations.map(row => row[1]));
-  for (const ship of ships) assert.equal(!!missionIcon('ship', ship), !ship.startsWith('henliner-'), ship);
+  for (const ship of ships) assert(missionIcon('ship', ship), ship);
   assert.equal(missionIcon('ship', 'chicken-one-0').file, 'afx_ship_chicken_1.png');
   assert.equal(missionIcon('ship', 'cornish-2').file, 'afx_ship_corellihen_corvette.png');
   assert.equal(missionIcon('ship', 'quintillion-chicken-3').file, 'afx_ship_millenium_chicken.png');
@@ -87,7 +87,10 @@ test('actual optimizer ship/target identifiers map to inspected highest-tier art
   assert.equal(missionIcon('target', 'tungsten-ankh-1').file, 'afx_tungsten_ankh_4.png');
   assert.equal(missionIcon('target', 'titanium-ore-3').file, 'afx_solar_titanium_3.png');
   assert.equal(missionIcon('target', 'clarity-stone-fragment').file, 'afx_clarity_stone_4.png');
-  assert.equal(Object.keys(iconCatalog.ships).length, 10);
+  for (const ship of ['henliner-1', 'henliner-2', 'henliner-3', 'atreggies-3']) {
+    assert.equal(missionIcon('ship', ship).file, 'afx_ship_atreggies.png');
+  }
+  assert.equal(Object.keys(iconCatalog.ships).length, 11);
   for (const value of ['unknown', '', 'https://example.invalid/image.png', '__proto__', null]) {
     assert.equal(missionIcon('target', value), null);
     assert.equal(missionIcon('ship', value), null);
@@ -106,6 +109,10 @@ test('bundled PNGs match source checksums and embedded offline image bytes exact
     assert.deepEqual(Buffer.from(iconImages[filename].split(',')[1], 'base64'), bytes);
   }
   for (const icon of [...Object.values(manifest.ships), ...Object.values(manifest.targets)]) assert(iconImages[icon.file]);
+  for (const [filename, sourcePath] of Object.entries(manifest.local_sources)) {
+    assert.deepEqual(fs.readFileSync(path.resolve(__dirname, '..', sourcePath)),
+      fs.readFileSync(path.resolve(__dirname, '../pwa/assets/egginc', filename)));
+  }
 });
 
 test('icon selection leaves plan data/identities intact and every bundled file is precached', async () => {

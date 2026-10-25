@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'pwa/**'
+      - 'image/**'
       - 'scripts/build_pwa_dashboard.py'
       - 'build_plan_dashboard.py'
       - '.github/workflows/deploy-pwa.yml'

@@ -110,7 +110,7 @@ test('whole-browser restart restores the plan/checklist offline, then closes/imp
     let page = context.pages()[0];
     await page.goto(baseURL);
     await expect(page.locator('#offlineStatus')).toHaveText('Ready offline');
-    let dashboard = await importFile(page);
+    let dashboard = await importFile(page, 'henliner');
     await dashboard.locator('.mission-cell').first().click();
     await expect(page.locator('#saveStatus')).toHaveText('Saved on this device');
     const savedTimes = await page.evaluate(async () => (await (await import('./store.mjs')).readActivePlan()).completionTimes);
@@ -122,7 +122,9 @@ test('whole-browser restart restores the plan/checklist offline, then closes/imp
     await expect(dashboard.locator('.mission-cell.done')).toHaveCount(1);
     await expect(dashboard.locator('.mission-cell.latest-completed')).toHaveCount(1);
     await expect(dashboard.locator('.latest-completed .completion-time').first()).toHaveText('Just now');
-    await expect(dashboard.locator('.mission-icon')).toHaveCount(5);
+    await expect(dashboard.locator('.mission-cell .mission-icon')).toHaveCount(5);
+    await expect(dashboard.locator('.mission-cell .mission-name img[data-icon-file="afx_ship_atreggies.png"]')).toHaveCount(3);
+    expect(await dashboard.locator('.mission-cell .mission-length-badge').allTextContents()).toEqual(['S', 'E', 'M']);
     await expect.poll(() => dashboard.locator('.mission-icon').evaluateAll(images => images.every(image => image.complete && image.naturalWidth > 0))).toBe(true);
     // Check raw bundled assets as well as embedded frame images with the entire
     // browser offline after restart (including repository-subpath deployment).
@@ -326,7 +328,7 @@ test('full-color icons keep accessible names, mission numbers, data and completi
   await expect(first.locator('.mission-name img')).toHaveAttribute('alt', /Henerprise.*henerprise-1/);
   await expect(first.locator('.mission-target img')).toHaveAttribute('alt', /Tungsten Ankh/);
   await expect(first).toHaveAttribute('aria-label', /Mission 1.*henerprise-1/);
-  await expect(first.locator('.mission-number')).toHaveText('#1Short');
+  await expect(first.locator('.mission-number')).toHaveText('#1S');
   const before = await page.evaluate(async () => (await (await import('./store.mjs')).readActivePlan()).data);
   const images = await first.locator('img').evaluateAll(elements => elements.map(image => image.src));
   async function unfiltered() {
@@ -354,27 +356,68 @@ test('full-color icons keep accessible names, mission numbers, data and completi
   expect(await page.evaluate(async () => (await (await import('./store.mjs')).readActivePlan()).data)).toEqual(before);
   await dashboard.locator('#slotFilter').selectOption('2');
   await expect(dashboard.locator('.mission-cell')).toHaveCount(1);
-  await expect(dashboard.locator('.mission-number')).toHaveText('#2Short');
+  await expect(dashboard.locator('.mission-number')).toHaveText('#2S');
 });
 
 test('missing and failed artwork shows readable fallback; ranked targets use highest artwork', async ({page}) => {
   await open(page);
   const html = fs.readFileSync(path.join(fixtures, 'first.html'), 'utf8');
   const data = JSON.parse(html.split('const data=')[1].split(';\ndocument.getElementById')[0]);
-  data.schedule[0].ship = 'henliner-3'; data.schedule[0].target = 'future-material';
+  data.schedule[0].ship = 'future-ship-3'; data.schedule[0].target = 'future-material';
   data.schedule[1].target = 'geode-1';
   await page.locator('#planFile').setInputFiles({name: 'fallback.html', mimeType: 'text/html',
     buffer: Buffer.from('<script>const data=' + JSON.stringify(data) + ';</script>')});
   const dashboard = page.frameLocator('#dashboard');
   const first = dashboard.locator('.mission-cell').first();
-  await expect(first.locator('.mission-name')).toHaveText('henliner-3');
+  await expect(first.locator('.mission-name')).toHaveText('future-ship-3');
   await expect(first.locator('.mission-target')).toHaveText('future-material');
-  await expect(first.locator('.mission-number')).toHaveText('#1Ext');
+  await expect(first.locator('.mission-number')).toHaveText('#1E');
   const material = dashboard.locator('.mission-target img').last();
   await expect(material).toHaveAttribute('data-icon-file', 'afx_tau_ceti_geode_3.png');
   await material.evaluate(image => { image.src = 'data:image/png;base64,broken'; });
   await expect(dashboard.locator('.mission-target').last()).toHaveText('geode-1');
   await first.click(); await expect(first).toHaveClass(/latest-completed/);
+  await expect(page.locator('#saveStatus')).toHaveText('Saved on this device');
+});
+
+test('local Henliner artwork and colored duration badges agree across checklist and ship displays', async ({page}) => {
+  await page.setViewportSize({width: 390, height: 844});
+  await open(page);
+  const dashboard = await importFile(page, 'henliner');
+  const original = await page.evaluate(async () => (await import('./store.mjs')).readActivePlan());
+  for (const [suffix, letter, name, color] of [[1, 'S', 'Short', 'rgb(37, 99, 235)'],
+    [2, 'M', 'Standard', 'rgb(124, 58, 237)'], [3, 'E', 'Extended', 'rgb(194, 65, 12)']]) {
+    const cell = dashboard.locator('.mission-cell[data-mission*="|henliner-' + suffix + '|"]');
+    const image = cell.locator('.mission-name img'), badge = cell.locator('.mission-length-badge');
+    await expect(image).toHaveAttribute('data-icon-file', 'afx_ship_atreggies.png');
+    await expect(image).toHaveAttribute('alt', /Atreggies Henliner/);
+    await expect.poll(() => image.evaluate(element => element.naturalWidth)).toBe(64);
+    await expect(badge).toHaveText(letter); await expect(badge).toHaveAttribute('aria-label', name + ' mission');
+    expect(await badge.evaluate(element => getComputedStyle(element).backgroundColor)).toBe(color);
+    await expect(cell).toHaveAttribute('aria-label', new RegExp(name + ' mission'));
+    const related = dashboard.locator('.ship-display').filter({hasText: 'henliner-' + suffix});
+    await expect(related).toHaveCount(2); // aggregate ship card and detailed schedule
+    await expect(related.locator('img[data-icon-file="afx_ship_atreggies.png"]')).toHaveCount(2);
+    for (const item of await related.locator('.mission-length-badge').all()) {
+      await expect(item).toHaveText(letter);
+      expect(await item.evaluate(element => getComputedStyle(element).backgroundColor)).toBe(color);
+    }
+  }
+  const first = dashboard.locator('.mission-cell').first();
+  await first.locator('.mission-length-badge').click();
+  await expect(first).toHaveClass(/latest-completed/);
+  await expect(page.locator('#saveStatus')).toHaveText('Saved on this device');
+  const saved = await page.evaluate(async () => (await import('./store.mjs')).readActivePlan());
+  expect(saved.data).toEqual(original.data); expect(saved.keys).toEqual(original.keys);
+  expect(await first.locator('.mission-length-badge').evaluate(element => getComputedStyle(element).backgroundColor)).toBe('rgb(37, 99, 235)');
+  await page.reload();
+  await expect(first).toHaveClass(/latest-completed/);
+  await expect(first.locator('.completion-time')).toHaveText('Just now');
+  expect(await page.evaluate(async () => (await (await import('./store.mjs')).readActivePlan()).completionTimes)).toEqual(saved.completionTimes);
+  await first.locator('.mission-name img').evaluate(image => { image.src = 'data:image/png;base64,broken'; });
+  await expect(first.locator('.mission-name')).toHaveText('henliner-1');
+  await first.click();
+  await expect(first).not.toHaveClass(/done/);
   await expect(page.locator('#saveStatus')).toHaveText('Saved on this device');
 });
 

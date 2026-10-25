@@ -5,7 +5,12 @@ export const checklistStyles = `
 .mission-identity .mission-name,.mission-identity .mission-target{display:flex;align-items:center;padding:0;line-height:1.2;max-width:100%}
 .mission-icon{display:block;width:34px;height:34px;object-fit:contain;filter:none;opacity:1;mix-blend-mode:normal}
 .mission-number{display:flex;flex-direction:column;gap:2px;flex:0 0 24px;font-size:10px;font-weight:700;line-height:1.1;overflow-wrap:anywhere}
-.mission-number small{font-size:9px;font-weight:400}
+.mission-length-badge{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:18px;height:18px;border-radius:5px;font-size:11px;font-weight:800;line-height:1;color:#fff;background:#475569;vertical-align:middle}
+.mission-length-badge.short{background:#2563eb}
+.mission-length-badge.standard{background:#7c3aed}
+.mission-length-badge.extended{background:#c2410c}
+.ship-display{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.related-ship-icon{width:32px;height:32px}
 .mission-identity .icon-fallback{font-size:11px;overflow-wrap:anywhere}
 .mission-cell.done.latest-completed{background:#f4d66b;border-color:#ffe394;color:#29250f}
 .mission-cell.done.latest-completed::after{color:#6b4f00}
@@ -32,10 +37,38 @@ export const checklistStyles = `
 export function installChecklist() {
   const bridge = window.__planBridge;
   const missions = new Map(sched.map((mission, index) => [missionKey(mission), {mission, number: index + 1}]));
+  function durationFor(ship) {
+    return ({0: ['Tutorial', 'T', 'tutorial'], 1: ['Short', 'S', 'short'],
+      2: ['Standard', 'M', 'standard'], 3: ['Extended', 'E', 'extended']})[/-(\d+)$/.exec(ship)?.[1]];
+  }
+  function durationBadge(duration) {
+    const badge = document.createElement('span');
+    badge.className = 'mission-length-badge ' + duration[2]; badge.textContent = duration[1];
+    badge.title = duration[0] + ' mission'; badge.setAttribute('aria-label', duration[0] + ' mission');
+    return badge;
+  }
+  function decorateShipDisplays() {
+    const labels = [...document.querySelectorAll('.shipcard .name'),
+      ...[...document.querySelectorAll('#scheduleRows tr')].map(row => row.children.length === 7 ? row.children[3] : null).filter(Boolean)];
+    for (const label of labels) {
+      if (label.querySelector('.ship-display')) continue;
+      const ship = label.textContent, icon = bridge.config.icons.ships[ship];
+      const display = document.createElement('span'); display.className = 'ship-display';
+      if (icon && bridge.config.icons.images[icon.file]) {
+        const image = document.createElement('img'); image.className = 'mission-icon related-ship-icon';
+        image.alt = icon.label; image.width = image.height = 32; image.dataset.iconFile = icon.file;
+        image.addEventListener('error', () => image.remove(), {once: true});
+        image.src = bridge.config.icons.images[icon.file]; display.append(image);
+      }
+      const name = document.createElement('span'); name.textContent = ship; display.append(name);
+      const duration = durationFor(ship); if (duration) display.append(durationBadge(duration));
+      label.replaceChildren(display);
+    }
+  }
   function decorateIcons() {
     document.querySelectorAll('.mission-cell').forEach(cell => {
       const {mission, number} = missions.get(cell.dataset.mission);
-      const duration = ({0: 'Tutorial', 1: 'Short', 2: 'Standard', 3: 'Extended'})[/-(\d+)$/.exec(mission.ship)?.[1]] || '';
+      const duration = durationFor(mission.ship);
       const ship = cell.querySelector('.mission-name'), target = cell.querySelector('.mission-target');
       function artwork(span, icon, fallback, name) {
         span.title = name;
@@ -57,13 +90,9 @@ export function installChecklist() {
       const identity = document.createElement('span'); identity.className = 'mission-identity';
       const index = document.createElement('span'); index.className = 'mission-number';
       index.append(document.createTextNode('#' + number));
-      if (duration) {
-        const badge = document.createElement('small');
-        badge.textContent = ({Standard: 'Std', Extended: 'Ext', Tutorial: 'Tut'})[duration] || duration;
-        badge.title = duration + ' mission'; index.append(badge);
-      }
+      if (duration) index.append(durationBadge(duration));
       identity.append(index, ship, target); cell.prepend(identity);
-      cell.setAttribute('aria-label', 'Mission ' + number + '. ' + (duration ? duration + ' mission. ' : '') + cell.title);
+      cell.setAttribute('aria-label', 'Mission ' + number + '. ' + (duration ? duration[0] + ' mission. ' : '') + cell.title);
     });
   }
   function relativeTime(timestamp, now = Date.now()) {
@@ -98,10 +127,11 @@ export function installChecklist() {
       label.setAttribute('aria-label', (key === latest ? 'Most recently completed. ' : 'Completed. ') + label.textContent);
     });
   }
-  const draw = drawTimeline, render = renderSchedule;
+  const draw = drawTimeline, render = renderSchedule, ships = renderShips;
   drawTimeline = () => { draw(); decorateIcons(); decorate(); };
-  renderSchedule = () => { render(); decorate(); };
-  decorateIcons(); decorate();
+  renderSchedule = () => { render(); decorateShipDisplays(); decorate(); };
+  renderShips = () => { ships(); decorateShipDisplays(); };
+  decorateIcons(); decorateShipDisplays(); decorate();
   setInterval(decorate, 15000);
   addEventListener('focus', decorate);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) decorate(); });

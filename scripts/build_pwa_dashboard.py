@@ -19,6 +19,11 @@ from build_plan_dashboard import TEMPLATE
 # permits data: images and still has no network access or same-origin privileges.
 icon_root = ROOT / 'pwa/assets/egginc'
 catalog = json.loads((icon_root / 'manifest.json').read_text(encoding='utf-8'))
+for filename, source_path in catalog.get('local_sources', {}).items():
+    content = (ROOT / source_path).read_bytes()
+    if hashlib.sha256(content).hexdigest() != catalog['files'][filename]:
+        raise ValueError('Local artwork differs from recorded checksum: ' + source_path)
+    (icon_root / filename).write_bytes(content)
 images = {}
 for filename, checksum in catalog['files'].items():
     content = (icon_root / filename).read_bytes()

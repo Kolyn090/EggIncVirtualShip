@@ -44,6 +44,10 @@
     "henerprise": {
       "file": "afx_ship_henerprise.png",
       "label": "Henerprise"
+    },
+    "henliner": {
+      "file": "afx_ship_atreggies.png",
+      "label": "Atreggies Henliner"
     }
   },
   "targets": {
@@ -312,6 +316,10 @@
     "afx_the_chalice_4.png": "8dc9729a4ffc6fdbfa0f5f9472db92176c0b4e1d34afb3b01d785e5d69b9b444",
     "afx_titanium_actuator_4.png": "c0c5d6b999ab060a401a7544d195e165106c50d5a93de51e880378e3cf0bb55d",
     "afx_tungsten_ankh_4.png": "05db42fb01b82b29979919733170951c67babb9f115db36e585b54ba7f9a00b1",
-    "afx_vial_martian_dust_4.png": "5910582a38e20d78e5a60c5e773abec197405cbad2f0d93f6e86237478e02352"
+    "afx_vial_martian_dust_4.png": "5910582a38e20d78e5a60c5e773abec197405cbad2f0d93f6e86237478e02352",
+    "afx_ship_atreggies.png": "e1036084b57908412df65709116afc46d320ca595d6d16271e2c06c6fc2120aa"
+  },
+  "local_sources": {
+    "afx_ship_atreggies.png": "image/afx_ship_atreggies.png"
   }
 }

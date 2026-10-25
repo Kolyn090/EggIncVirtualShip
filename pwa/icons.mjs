@@ -5,7 +5,7 @@ const targetAliases = {metronome: 'metronome', 'quantum-metronome': 'metronome',
   'mercurys-lens': 'lens', 'titanium-actuator': 'actuator', 'solar-titanium': 'titanium',
   'titanium-bar': 'titanium', 'titanium-ore': 'titanium'};
 const shipAliases = {'chicken-heavy': 'heavy', 'corellihen-corvette': 'cornish',
-  'millenium-chicken': 'quintillion-chicken', chickfiant: 'defihent'};
+  'millenium-chicken': 'quintillion-chicken', chickfiant: 'defihent', atreggies: 'henliner'};
 
 export function missionIcon(kind, value) {
   if (typeof value !== 'string') return null;

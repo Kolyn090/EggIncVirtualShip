@@ -10,7 +10,7 @@ from build_plan_dashboard import build
 
 base = Path(sys.argv[1])
 base.mkdir(parents=True, exist_ok=True)
-for label, target in [('first', 'ankh-4'), ('second', 'metronome-4')]:
+for label, target in [('first', 'ankh-4'), ('second', 'metronome-4'), ('henliner', 'ankh-4')]:
     folder = base / label
     folder.mkdir(exist_ok=True)
     def write(name, fields, rows):
@@ -21,9 +21,13 @@ for label, target in [('first', 'ankh-4'), ('second', 'metronome-4')]:
     schedule = [dict(slot=1, phase=1, ship='henerprise-1', target='ankh', event_bonus=False, start_hour=8, end_hour=17.6),
                 dict(slot=2, phase=2, ship='henerprise-1', target='meteorite', event_bonus=True, start_hour=24, end_hour=33.6),
                 dict(slot=1, phase=3, ship='henerprise-1', target='none', event_bonus=False, start_hour=48, end_hour=57.6)]
+    horizon = 96 if label == 'henliner' else 72
+    if label == 'henliner':
+        for index, (row, duration) in enumerate(zip(schedule, [19.2, 28.8, 38.4]), 1):
+            row.update(ship=f'henliner-{index}', end_hour=row['start_hour'] + duration)
     write('schedule.csv', list(schedule[0]), schedule)
     plans = [dict(slot=r['slot'], phase=r['phase'], ship=r['ship'], target=r['target'], event_bonus=r['event_bonus'],
-                  launches=1, total_hours=9.6, total_fuel_T=25, curiousity_T=15, kindness_T=10, resilence_T=0, integrity_T=0) for r in schedule]
+                  launches=1, total_hours=r['end_hour']-r['start_hour'], total_fuel_T=25, curiousity_T=15, kindness_T=10, resilence_T=0, integrity_T=0) for r in schedule]
     write('launch_plan.csv', list(plans[0]), plans)
     write('craft_plan.csv', ['material_id', 'crafts'], [dict(material_id=target, crafts=2)])
     balance = [dict(material_id=target, starting_inventory=1, expected_drops=0, crafted=2, consumed=0, expected_remaining=3)]
@@ -31,8 +35,8 @@ for label, target in [('first', 'ankh-4'), ('second', 'metronome-4')]:
     write('event_windows.csv', ['phase', 'start_hour', 'end_hour', 'event_bonus'], [
         dict(phase=1, start_hour=0, end_hour=24, event_bonus=False),
         dict(phase=2, start_hour=24, end_hour=48, event_bonus=True),
-        dict(phase=3, start_hour=48, end_hour=72, event_bonus=False)])
-    (folder / 'plan_metadata.json').write_text(json.dumps(dict(target=target, parallel=3, horizon_hours=72,
+        dict(phase=3, start_hour=48, end_hour=horizon, event_bonus=False)])
+    (folder / 'plan_metadata.json').write_text(json.dumps(dict(target=target, parallel=3, horizon_hours=horizon,
         max_launches_per_hour=1, max_total_launches=3, max_launches_per_day=0,
         targeting_profile_names={'none': 'Untargeted', 'ankh': 'Tungsten Ankh', 'meteorite': 'Gold Meteorite'},
         optimization=dict(mode='balanced', status=0, guarantees={'crafts': {'proven': True, 'value': 2, 'bound': 2, 'gap': 0}},
