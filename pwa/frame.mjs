@@ -1,5 +1,6 @@
 import {dashboardTemplate} from './dashboard-template.mjs';
 import {checklistStyles, installChecklist} from './checklist.mjs';
+import {planIcons} from './icons.mjs';
 
 const scriptJSON = value => JSON.stringify(value).replaceAll('<', '\\u003c');
 
@@ -7,7 +8,7 @@ export function renderDashboard(record, token) {
   // Only this trusted, bundled template runs. Imported HTML is never executed.
   const setup = `(() => {
     const config = ${scriptJSON({id: record.id, token, key: record.storageKey, progress: record.progress,
-      completionTimes: record.completionTimes || {}})};
+      completionTimes: record.completionTimes || {}, icons: planIcons(record.data)})};
     let progress = config.progress;
     const send = message => parent.postMessage({...message, id: config.id, token: config.token}, '*');
     window.__planBridge = {

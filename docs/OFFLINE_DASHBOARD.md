@@ -112,11 +112,50 @@ ties. Unchecking removes that entry's timestamp; rechecking records a new one.
 
 At widths up to 650px, the checklist uses smaller padding, card widths and lane
 spacing while retaining ship, target, launch/finish times and status. The
-390px-wide test fixture's lane height drops from 208.5px to about 155px (about 35%
+390px-wide icon test fixture's lane height drops from 208.5px to 160px (about 30%
 more lanes in the same vertical space). Cards remain at least 108px tall and
 schedule-table check buttons retain 44px touch targets. Longer names or visible
 completion timestamps can increase card height. Desktop card dimensions and
 the checklist ordering are unchanged.
+
+## Ship and target artwork
+
+Compact checklist cards show original full-color Egg, Inc. ship and target
+icons at 32px on mobile and 34px on desktop. The card background still conveys
+completion/event state; artwork keeps its original colors, including on hover.
+Mission numbers use the full plan's launch order, so filtering slots does not
+renumber them. Short/Std/Ext duration badges (full names in accessible labels), launch and finish times,
+2× capacity labels and completion timestamps remain visible. Ship/target names
+are available through image alt text, the card's accessible label and tooltip,
+and the unchanged detailed schedule table.
+
+Mappings use actual optimizer identifiers and source filenames verified at
+`fanaticscripter/EggIncAssets` revision
+`075805d987ae55d74579abff3f75f9b28e84d5fc`. Target icons always use their family's
+highest numbered artwork: T4 artifacts/stones and T3 raw materials. Fragment
+targets also use their stone family's highest artwork. This is presentation
+only: no tier, quantity, mission identity, target or optimizer data is changed.
+
+Ship suffixes `-1/-2/-3` mean mission duration in optimizer data, not star level.
+The inspected source has one icon for each of ten ship families, with no level
+variants. It contains **no Henliner artwork**. Henliner, unknown ships/targets,
+untargeted missions and any failed image use readable text fallbacks rather
+than an unrelated icon or broken image. Newer ship artwork can be mapped when
+it becomes available from the specified source.
+
+All 44 original PNGs, source filenames/checksums and provenance notice live in
+[`pwa/assets/egginc/`](../pwa/assets/egginc/). The upstream repository contains
+no license or redistribution terms; its README says the assets were extracted
+from the Android app. See [artwork attribution and rights](../pwa/assets/egginc/ATTRIBUTION.md)
+for the exact notice and credits. The artwork is not represented as open-source
+or relicensed under this project's software terms.
+
+The build verifies PNG checksums and generates `egginc-icons.mjs` with unchanged
+PNG bytes as data URLs. Each frame receives only the artwork needed for its
+plan. No external image requests or frame CSP relaxation are needed. All
+bundled files, including raw PNGs and provenance, are precached locally and
+included in the content-based service-worker version. Installed apps refresh
+these assets on an online update without deleting their active plan/checklist.
 
 ## Progress backups
 
@@ -165,9 +204,12 @@ installation has not been tested; the mobile layout is tested in Chromium.
   is ever migrated to another plan. A closed frame's browsing context is
   discarded so iframe Back history cannot become a plan switcher.
 - `checklist.mjs` adds the PWA-only completion highlight, live timestamp labels,
-  timestamp-aware compatible backups and compact mobile styles around the
+  timestamp-aware compatible backups, icon cards and compact mobile styles around the
   unchanged trusted template. The optimizer, source dashboard generator and
   mission scheduling logic are untouched.
+- `icons.mjs` maps verified optimizer identifiers to the bundled source catalog.
+  `egginc-icons.mjs` is generated from the local PNGs and manifest; no asset
+  downloads or third-party services are used by the deployed app.
 - The service worker caches only app assets. An asset update does not delete or
   migrate the active record. All data is local; no imported files are requested
   by or posted to a server.
@@ -194,7 +236,7 @@ npx playwright install chromium
 PLAYWRIGHT_CHROMIUM_EXECUTABLE=/path/to/chromium npm run test:pwa
 ```
 
-Eleven browser tests cover local import, auto-saving check and uncheck, normal
+Thirteen browser tests cover local import, auto-saving check and uncheck, normal
 reload, a full persistent-profile browser restart while offline, offline close
 and reimport, blocked replacement, cancellation/confirmed deletion, stale
 writes, concurrent windows, explicit progress backups, untrusted HTML,
@@ -203,16 +245,22 @@ coverage checks persistent timestamps and yellow highlights after an offline
 restart, live relative labels, uncheck fallback, legacy records/backups,
 timestamp backup round trips, cross-window timestamp-only updates, invalid
 dates, original click times after save retries, mobile density and unchanged
-desktop dimensions.
-Five Node tests cover parsing, malformed input, data preservation, backup-key
-compatibility and script escaping. A Python parity test ensures the offline
+desktop dimensions. Icon tests check correct filenames, accessible labels,
+stable mission numbers, unfiltered artwork in every completion/hover state,
+missing/failed image fallbacks, unchanged plan data and all raw PNGs available
+after a full browser restart offline. Tests also run at `/EggIncVirtualShip/`.
+Eight PWA Node tests cover parsing, malformed input, data preservation, backup-key
+compatibility, script escaping, actual data-to-icon mappings, highest tiers,
+source/embedded byte checksums and complete service-worker asset coverage.
+A Python parity test ensures the offline
 bundle exactly matches the existing dashboard design and behavior.
 
 Verified commands for this implementation:
 
 - `npm run build:pwa`
-- `npm run test:pwa` — 11 real Chromium browser tests passed.
-- `npm test` — 14 Node tests passed, including the existing source-data tests.
+- `npm run test:pwa` — 13 real Chromium browser tests passed.
+- `PWA_TEST_SUBPATH=1 npm run test:pwa` — same 13 tests at `/EggIncVirtualShip/`.
+- `npm test` — 17 Node tests passed, including the existing source-data tests.
 - `.venv/bin/python -m unittest discover -s tests -v` — 66 tests passed.
 
 A real 360-mission HTML export was also imported on a 390×844 viewport. Its

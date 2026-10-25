@@ -122,6 +122,15 @@ test('whole-browser restart restores the plan/checklist offline, then closes/imp
     await expect(dashboard.locator('.mission-cell.done')).toHaveCount(1);
     await expect(dashboard.locator('.mission-cell.latest-completed')).toHaveCount(1);
     await expect(dashboard.locator('.latest-completed .completion-time').first()).toHaveText('Just now');
+    await expect(dashboard.locator('.mission-icon')).toHaveCount(5);
+    await expect.poll(() => dashboard.locator('.mission-icon').evaluateAll(images => images.every(image => image.complete && image.naturalWidth > 0))).toBe(true);
+    // Check raw bundled assets as well as embedded frame images with the entire
+    // browser offline after restart (including repository-subpath deployment).
+    expect(await page.evaluate(async () => {
+      const {iconCatalog} = await import('./egginc-icons.mjs');
+      const responses = await Promise.all(Object.keys(iconCatalog.files).map(name => fetch('./assets/egginc/' + name)));
+      return responses.every(response => response.ok);
+    })).toBe(true);
     expect(await page.evaluate(async () => (await (await import('./store.mjs')).readActivePlan()).completionTimes)).toEqual(savedTimes);
     await dashboard.locator('.mission-cell').first().click();
     await expect(page.locator('#saveStatus')).toHaveText('Saved on this device');
@@ -281,32 +290,92 @@ test('mobile controls, mission cards, and failed saves remain usable', async ({p
   expect(await page.evaluate(async () => (await (await import('./store.mjs')).readActivePlan()).completionTimes)).toEqual(actionTimes);
 });
 
-test('mobile checklist is denser with readable information and desktop dimensions unchanged', async ({page}) => {
+test('compact icon checklist keeps mission details, touch targets and desktop card dimensions', async ({page}) => {
   await page.setViewportSize({width: 390, height: 844});
   await open(page);
   const dashboard = await importFile(page);
   async function dimensions() {
     return dashboard.locator('.checklane').first().evaluate(lane => {
-      const style = document.getElementById('pwa-checklist-style');
-      const measure = () => ({height: lane.getBoundingClientRect().height,
+      return {height: lane.getBoundingClientRect().height,
         width: lane.querySelector('.mission-cell').getBoundingClientRect().width,
-        cardHeight: lane.querySelector('.mission-cell').getBoundingClientRect().height});
-      const compact = measure(); style.sheet.disabled = true;
-      const original = measure(); style.sheet.disabled = false;
-      return {compact, original};
+        cardHeight: lane.querySelector('.mission-cell').getBoundingClientRect().height};
     });
   }
   const mobile = await dimensions();
   console.log('Mobile checklist dimensions:', JSON.stringify(mobile));
-  expect(mobile.original.height / mobile.compact.height).toBeGreaterThanOrEqual(1.3);
-  expect(mobile.compact.cardHeight).toBeGreaterThanOrEqual(44);
+  expect(mobile.width).toBe(128);
+  expect(mobile.height).toBeLessThanOrEqual(165);
+  expect(mobile.cardHeight).toBeGreaterThanOrEqual(44);
   const first = dashboard.locator('.mission-cell').first();
   for (const selector of ['.mission-name', '.mission-target', '.mission-time', '.mission-flag']) {
     await expect(first.locator(selector)).toBeVisible();
   }
   await page.setViewportSize({width: 1280, height: 900});
   const desktop = await dimensions();
-  expect(desktop.compact).toEqual(desktop.original);
+  expect(desktop.width).toBe(164);
+  expect(desktop.cardHeight).toBe(134);
+});
+
+test('full-color icons keep accessible names, mission numbers, data and completion behavior', async ({page}) => {
+  await page.setViewportSize({width: 390, height: 844});
+  await open(page);
+  const dashboard = await importFile(page);
+  const first = dashboard.locator('.mission-cell').first();
+  await expect(first.locator('.mission-name img')).toHaveAttribute('data-icon-file', 'afx_ship_henerprise.png');
+  await expect(first.locator('.mission-target img')).toHaveAttribute('data-icon-file', 'afx_tungsten_ankh_4.png');
+  await expect(first.locator('.mission-name img')).toHaveAttribute('alt', /Henerprise.*henerprise-1/);
+  await expect(first.locator('.mission-target img')).toHaveAttribute('alt', /Tungsten Ankh/);
+  await expect(first).toHaveAttribute('aria-label', /Mission 1.*henerprise-1/);
+  await expect(first.locator('.mission-number')).toHaveText('#1Short');
+  const before = await page.evaluate(async () => (await (await import('./store.mjs')).readActivePlan()).data);
+  const images = await first.locator('img').evaluateAll(elements => elements.map(image => image.src));
+  async function unfiltered() {
+    return first.locator('img').evaluateAll(images => images.every(image => {
+      for (let node = image; node; node = node.parentElement) {
+        const style = getComputedStyle(node);
+        if (style.filter !== 'none' || style.opacity !== '1') return false;
+      }
+      const size = image.getBoundingClientRect();
+      return size.width >= 32 && size.width <= 36 && size.height >= 32 && size.height <= 36 && image.naturalWidth > 0;
+    }));
+  }
+  await first.hover(); await expect.poll(unfiltered).toBe(true);
+  await first.locator('.mission-target img').click();
+  await expect(first).toHaveClass(/latest-completed/);
+  await expect.poll(unfiltered).toBe(true);
+  const iconTops = await first.locator('img').evaluateAll(images => images.map(image => image.getBoundingClientRect().top));
+  expect(Math.abs(iconTops[0] - iconTops[1])).toBeLessThan(1);
+  expect((await first.boundingBox()).height).toBeLessThanOrEqual(140);
+  await dashboard.locator('.mission-cell').last().click();
+  await expect(first).toHaveClass(/done/); await expect(first).not.toHaveClass(/latest-completed/);
+  await first.hover(); await expect.poll(unfiltered).toBe(true);
+  expect(await first.locator('img').evaluateAll(elements => elements.map(image => image.src))).toEqual(images);
+  await expect(page.locator('#saveStatus')).toHaveText('Saved on this device');
+  expect(await page.evaluate(async () => (await (await import('./store.mjs')).readActivePlan()).data)).toEqual(before);
+  await dashboard.locator('#slotFilter').selectOption('2');
+  await expect(dashboard.locator('.mission-cell')).toHaveCount(1);
+  await expect(dashboard.locator('.mission-number')).toHaveText('#2Short');
+});
+
+test('missing and failed artwork shows readable fallback; ranked targets use highest artwork', async ({page}) => {
+  await open(page);
+  const html = fs.readFileSync(path.join(fixtures, 'first.html'), 'utf8');
+  const data = JSON.parse(html.split('const data=')[1].split(';\ndocument.getElementById')[0]);
+  data.schedule[0].ship = 'henliner-3'; data.schedule[0].target = 'future-material';
+  data.schedule[1].target = 'geode-1';
+  await page.locator('#planFile').setInputFiles({name: 'fallback.html', mimeType: 'text/html',
+    buffer: Buffer.from('<script>const data=' + JSON.stringify(data) + ';</script>')});
+  const dashboard = page.frameLocator('#dashboard');
+  const first = dashboard.locator('.mission-cell').first();
+  await expect(first.locator('.mission-name')).toHaveText('henliner-3');
+  await expect(first.locator('.mission-target')).toHaveText('future-material');
+  await expect(first.locator('.mission-number')).toHaveText('#1Ext');
+  const material = dashboard.locator('.mission-target img').last();
+  await expect(material).toHaveAttribute('data-icon-file', 'afx_tau_ceti_geode_3.png');
+  await material.evaluate(image => { image.src = 'data:image/png;base64,broken'; });
+  await expect(dashboard.locator('.mission-target').last()).toHaveText('geode-1');
+  await first.click(); await expect(first).toHaveClass(/latest-completed/);
+  await expect(page.locator('#saveStatus')).toHaveText('Saved on this device');
 });
 
 test('timestamp-only backup updates synchronize across windows and invalid dates are rejected', async ({page, context}) => {

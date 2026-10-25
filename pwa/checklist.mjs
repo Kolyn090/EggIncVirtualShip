@@ -1,5 +1,12 @@
 // PWA-only presentation; the trusted standalone dashboard stays unchanged.
 export const checklistStyles = `
+.mission-cell:hover{filter:none}
+.mission-identity{display:flex;align-items:center;flex-wrap:wrap;gap:4px;padding-right:12px}
+.mission-identity .mission-name,.mission-identity .mission-target{display:flex;align-items:center;padding:0;line-height:1.2;max-width:100%}
+.mission-icon{display:block;width:34px;height:34px;object-fit:contain;filter:none;opacity:1;mix-blend-mode:normal}
+.mission-number{display:flex;flex-direction:column;gap:2px;flex:0 0 24px;font-size:10px;font-weight:700;line-height:1.1;overflow-wrap:anywhere}
+.mission-number small{font-size:9px;font-weight:400}
+.mission-identity .icon-fallback{font-size:11px;overflow-wrap:anywhere}
 .mission-cell.done.latest-completed{background:#f4d66b;border-color:#ffe394;color:#29250f}
 .mission-cell.done.latest-completed::after{color:#6b4f00}
 .mission-cell.done.latest-completed .mission-time{color:#493b10}
@@ -14,6 +21,7 @@ export const checklistStyles = `
   .mission-cell .mission-name{font-size:12px;line-height:1.2}
   .mission-cell .mission-target{font-size:11px;line-height:1.25}
   .mission-cell .mission-time,.mission-cell .mission-flag{line-height:1.25}
+  .mission-icon{width:32px;height:32px}
   .mission-cell.done::after{right:6px;top:4px;font-size:18px}
   .completion-time{font-size:10px;margin-top:2px}
   .lane-gap{flex-basis:82px;padding:6px}
@@ -23,6 +31,41 @@ export const checklistStyles = `
 // Self-contained so it can run inside the offline, opaque-origin frame.
 export function installChecklist() {
   const bridge = window.__planBridge;
+  const missions = new Map(sched.map((mission, index) => [missionKey(mission), {mission, number: index + 1}]));
+  function decorateIcons() {
+    document.querySelectorAll('.mission-cell').forEach(cell => {
+      const {mission, number} = missions.get(cell.dataset.mission);
+      const duration = ({0: 'Tutorial', 1: 'Short', 2: 'Standard', 3: 'Extended'})[/-(\d+)$/.exec(mission.ship)?.[1]] || '';
+      const ship = cell.querySelector('.mission-name'), target = cell.querySelector('.mission-target');
+      function artwork(span, icon, fallback, name) {
+        span.title = name;
+        const source = icon && bridge.config.icons.images[icon.file];
+        const textFallback = () => { span.replaceChildren(document.createTextNode(fallback)); span.classList.add('icon-fallback'); };
+        if (!source) { textFallback(); return; }
+        const image = document.createElement('img'); image.className = 'mission-icon';
+        image.alt = name; image.width = 34; image.height = 34;
+        image.dataset.iconFile = icon.file;
+        image.addEventListener('error', textFallback, {once: true});
+        image.src = source;
+        span.replaceChildren(image);
+      }
+      const shipIcon = bridge.config.icons.ships[mission.ship];
+      artwork(ship, shipIcon, mission.ship, (shipIcon?.label || mission.ship) + ' (' + mission.ship + ')');
+      const targetIcon = bridge.config.icons.targets[mission.target || 'none'];
+      artwork(target, targetIcon, targetNameFor(mission), 'Target: ' + targetNameFor(mission) +
+        (targetIcon ? ' (highest-tier artwork)' : ''));
+      const identity = document.createElement('span'); identity.className = 'mission-identity';
+      const index = document.createElement('span'); index.className = 'mission-number';
+      index.append(document.createTextNode('#' + number));
+      if (duration) {
+        const badge = document.createElement('small');
+        badge.textContent = ({Standard: 'Std', Extended: 'Ext', Tutorial: 'Tut'})[duration] || duration;
+        badge.title = duration + ' mission'; index.append(badge);
+      }
+      identity.append(index, ship, target); cell.prepend(identity);
+      cell.setAttribute('aria-label', 'Mission ' + number + '. ' + (duration ? duration + ' mission. ' : '') + cell.title);
+    });
+  }
   function relativeTime(timestamp, now = Date.now()) {
     if (!Number.isFinite(timestamp) || timestamp <= 0) return 'Completion time unavailable';
     const date = new Date(timestamp), today = new Date(now);
@@ -56,9 +99,9 @@ export function installChecklist() {
     });
   }
   const draw = drawTimeline, render = renderSchedule;
-  drawTimeline = () => { draw(); decorate(); };
+  drawTimeline = () => { draw(); decorateIcons(); decorate(); };
   renderSchedule = () => { render(); decorate(); };
-  decorate();
+  decorateIcons(); decorate();
   setInterval(decorate, 15000);
   addEventListener('focus', decorate);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) decorate(); });

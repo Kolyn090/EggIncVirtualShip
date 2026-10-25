@@ -1,0 +1,317 @@
+{
+  "source": {
+    "repository": "https://github.com/fanaticscripter/EggIncAssets",
+    "commit": "075805d987ae55d74579abff3f75f9b28e84d5fc",
+    "directory": "64/egginc"
+  },
+  "ships": {
+    "chicken-one": {
+      "file": "afx_ship_chicken_1.png",
+      "label": "Chicken One"
+    },
+    "chicken-nine": {
+      "file": "afx_ship_chicken_9.png",
+      "label": "Chicken Nine"
+    },
+    "heavy": {
+      "file": "afx_ship_chicken_heavy.png",
+      "label": "Chicken Heavy"
+    },
+    "bcr": {
+      "file": "afx_ship_bcr.png",
+      "label": "BCR"
+    },
+    "quintillion-chicken": {
+      "file": "afx_ship_millenium_chicken.png",
+      "label": "Quintillion Chicken"
+    },
+    "cornish": {
+      "file": "afx_ship_corellihen_corvette.png",
+      "label": "Cornish-Hen Corvette"
+    },
+    "galeggtica": {
+      "file": "afx_ship_galeggtica.png",
+      "label": "Galeggtica"
+    },
+    "defihent": {
+      "file": "afx_ship_defihent.png",
+      "label": "Defihent"
+    },
+    "voyegger": {
+      "file": "afx_ship_voyegger.png",
+      "label": "Voyegger"
+    },
+    "henerprise": {
+      "file": "afx_ship_henerprise.png",
+      "label": "Henerprise"
+    }
+  },
+  "targets": {
+    "actuator": {
+      "file": "afx_titanium_actuator_4.png",
+      "rank": 4,
+      "label": "Titanium actuator"
+    },
+    "ankh": {
+      "file": "afx_tungsten_ankh_4.png",
+      "rank": 4,
+      "label": "Tungsten ankh"
+    },
+    "aurelian-brooch": {
+      "file": "afx_aurelian_brooch_4.png",
+      "rank": 4,
+      "label": "Aurelian brooch"
+    },
+    "beak-of-midas": {
+      "file": "afx_beak_of_midas_4.png",
+      "rank": 4,
+      "label": "Beak of Midas"
+    },
+    "book-of-basan": {
+      "file": "afx_book_of_basan_4.png",
+      "rank": 4,
+      "label": "Book of Basan"
+    },
+    "carved-rainstick": {
+      "file": "afx_carved_rainstick_4.png",
+      "rank": 4,
+      "label": "Carved rainstick"
+    },
+    "clarity-stone": {
+      "file": "afx_clarity_stone_4.png",
+      "rank": 4,
+      "label": "Clarity stone"
+    },
+    "clarity-stone-fragment": {
+      "file": "afx_clarity_stone_4.png",
+      "rank": 4,
+      "label": "Clarity stone fragment"
+    },
+    "demeters-necklace": {
+      "file": "afx_demeters_necklace_4.png",
+      "rank": 4,
+      "label": "Demeters necklace"
+    },
+    "dilithium-monocle": {
+      "file": "afx_dilithium_monocle_4.png",
+      "rank": 4,
+      "label": "Dilithium monocle"
+    },
+    "dilithium-stone": {
+      "file": "afx_dilithium_stone_4.png",
+      "rank": 4,
+      "label": "Dilithium stone"
+    },
+    "dilithium-stone-fragment": {
+      "file": "afx_dilithium_stone_4.png",
+      "rank": 4,
+      "label": "Dilithium stone fragment"
+    },
+    "geode": {
+      "file": "afx_tau_ceti_geode_3.png",
+      "rank": 3,
+      "label": "Tau Ceti geode"
+    },
+    "interstellar-compass": {
+      "file": "afx_interstellar_compass_4.png",
+      "rank": 4,
+      "label": "Interstellar compass"
+    },
+    "lens": {
+      "file": "afx_mercurys_lens_4.png",
+      "rank": 4,
+      "label": "Mercury's lens"
+    },
+    "life-stone": {
+      "file": "afx_life_stone_4.png",
+      "rank": 4,
+      "label": "Life stone"
+    },
+    "life-stone-fragment": {
+      "file": "afx_life_stone_4.png",
+      "rank": 4,
+      "label": "Life stone fragment"
+    },
+    "light-of-eggendil": {
+      "file": "afx_light_eggendil_4.png",
+      "rank": 4,
+      "label": "Light of Eggendil"
+    },
+    "lunar-stone": {
+      "file": "afx_lunar_stone_4.png",
+      "rank": 4,
+      "label": "Lunar stone"
+    },
+    "lunar-stone-fragment": {
+      "file": "afx_lunar_stone_4.png",
+      "rank": 4,
+      "label": "Lunar stone fragment"
+    },
+    "lunar-totem": {
+      "file": "afx_lunar_totem_4.png",
+      "rank": 4,
+      "label": "Lunar totem"
+    },
+    "meteorite": {
+      "file": "afx_gold_meteorite_3.png",
+      "rank": 3,
+      "label": "Gold meteorite"
+    },
+    "metronome": {
+      "file": "afx_quantum_metronome_4.png",
+      "rank": 4,
+      "label": "Quantum metronome"
+    },
+    "neodymium-medallion": {
+      "file": "afx_neo_medallion_4.png",
+      "rank": 4,
+      "label": "Neodymium medallion"
+    },
+    "ornate-gusset": {
+      "file": "afx_ornate_gusset_4.png",
+      "rank": 4,
+      "label": "Gusset"
+    },
+    "phoenix-feather": {
+      "file": "afx_phoenix_feather_4.png",
+      "rank": 4,
+      "label": "Phoenix feather"
+    },
+    "prophecy-stone": {
+      "file": "afx_prophecy_stone_4.png",
+      "rank": 4,
+      "label": "Prophecy stone"
+    },
+    "prophecy-stone-fragment": {
+      "file": "afx_prophecy_stone_4.png",
+      "rank": 4,
+      "label": "Prophecy stone fragment"
+    },
+    "puzzle-cube": {
+      "file": "afx_puzzle_cube_4.png",
+      "rank": 4,
+      "label": "Puzzle cube"
+    },
+    "quantum-stone": {
+      "file": "afx_quantum_stone_4.png",
+      "rank": 4,
+      "label": "Quantum stone"
+    },
+    "quantum-stone-fragment": {
+      "file": "afx_quantum_stone_4.png",
+      "rank": 4,
+      "label": "Quantum stone fragment"
+    },
+    "shell-stone": {
+      "file": "afx_shell_stone_4.png",
+      "rank": 4,
+      "label": "Shell stone"
+    },
+    "shell-stone-fragment": {
+      "file": "afx_shell_stone_4.png",
+      "rank": 4,
+      "label": "Shell stone fragment"
+    },
+    "ship-in-a-bottle": {
+      "file": "afx_ship_in_a_bottle_4.png",
+      "rank": 4,
+      "label": "Ship in a bottle"
+    },
+    "soul-stone": {
+      "file": "afx_soul_stone_4.png",
+      "rank": 4,
+      "label": "Soul stone"
+    },
+    "soul-stone-fragment": {
+      "file": "afx_soul_stone_4.png",
+      "rank": 4,
+      "label": "Soul stone fragment"
+    },
+    "tachyon-deflector": {
+      "file": "afx_tachyon_deflector_4.png",
+      "rank": 4,
+      "label": "Tachyon deflector"
+    },
+    "tachyon-stone": {
+      "file": "afx_tachyon_stone_4.png",
+      "rank": 4,
+      "label": "Tachyon stone"
+    },
+    "tachyon-stone-fragment": {
+      "file": "afx_tachyon_stone_4.png",
+      "rank": 4,
+      "label": "Tachyon stone fragment"
+    },
+    "terra-stone": {
+      "file": "afx_terra_stone_4.png",
+      "rank": 4,
+      "label": "Terra stone"
+    },
+    "terra-stone-fragment": {
+      "file": "afx_terra_stone_4.png",
+      "rank": 4,
+      "label": "Terra stone fragment"
+    },
+    "the-chalice": {
+      "file": "afx_the_chalice_4.png",
+      "rank": 4,
+      "label": "The chalice"
+    },
+    "titanium": {
+      "file": "afx_solar_titanium_3.png",
+      "rank": 3,
+      "label": "Solar titanium"
+    },
+    "vial-martian-dust": {
+      "file": "afx_vial_martian_dust_4.png",
+      "rank": 4,
+      "label": "Vial of Martian dust"
+    }
+  },
+  "files": {
+    "afx_aurelian_brooch_4.png": "66647f3b24631b387075038c900ffb128f5fc9928809df1236316501f39907c3",
+    "afx_beak_of_midas_4.png": "6078437188ea36ce0ba2644fec5eb2321f3b7a3444122e227987035511e2b457",
+    "afx_book_of_basan_4.png": "e1bf328f4ce3641444ba2eec6c8b193be22cff6ac86720e1de09f7d141e79e50",
+    "afx_carved_rainstick_4.png": "6821b056ae7aa18efbdb91d7ff69f144a14e378505b1b43829d47d52fe67bb1c",
+    "afx_clarity_stone_4.png": "131ec899c3ce2e95b98abf06e709ace990b6dee78c2875444becd3efe98a1146",
+    "afx_demeters_necklace_4.png": "c0f26eaf80578a9a246043d9d080b30adecc78ccc1e4d00d42971d219fad792a",
+    "afx_dilithium_monocle_4.png": "2d53a7807e63d36e068cbb906f33c5432a433c3dc231b39a65188d1d28651ad2",
+    "afx_dilithium_stone_4.png": "344827f07f2e46b25432ff3530c3fd7cc5e184ded1695e1e107e307fe7884792",
+    "afx_gold_meteorite_3.png": "80ba4d97b13499930a8b7c1fadb448bd36ebff9d00145035834640a343050873",
+    "afx_interstellar_compass_4.png": "61de9e5f4c9428e897ab2a6a4710da54185d3ec1d0ff11f6da5f1f6853fbca59",
+    "afx_life_stone_4.png": "7bbb28b188e8ae6e3a735e5b4c4f6c22304a2dc414b062ceb69b5c97a959e53e",
+    "afx_light_eggendil_4.png": "1b1734d1647408f33ccd6a5fe5f815a774f21ccc452e160be7b7cbec121326b4",
+    "afx_lunar_stone_4.png": "b72a3f8be86b8170296ae614f7ababfb3d6932d53364e755ef55da623191a90d",
+    "afx_lunar_totem_4.png": "22b153bf03e46ffe4ce6571097f8b4654c87501e6685717ea39f68e02bed83ad",
+    "afx_mercurys_lens_4.png": "6a3e9fe80b793093b8b6f51da37fd31e072e95b6dfd51b19d9b4bd082b0fd3bb",
+    "afx_neo_medallion_4.png": "8fe5c47cc91481ae1a817c408e8accf5161a723092f76edb769a46af793812b1",
+    "afx_ornate_gusset_4.png": "fb2a9e16864b69ae5879c6f3b95c66daa5a0aef86b7357db6293824b9bd92511",
+    "afx_phoenix_feather_4.png": "3b28a0aa452db3cae8cd6d23e7530c2e319c8c409fd4a3bb49af4ef65b4fcd51",
+    "afx_prophecy_stone_4.png": "dc00c22749b457b020080d2a7398d196aa74d4bb602c382db9c00e83790f3f0a",
+    "afx_puzzle_cube_4.png": "6a02467c4be6132d5363ae0da19c08842393c82e57edaef2ed8c3cff76f17bb8",
+    "afx_quantum_metronome_4.png": "dc4a6619c8e67b001f53881abb8bca2f023c1de28bb95c15d56b263697915803",
+    "afx_quantum_stone_4.png": "215af1ee9ef33a17b9db0eb2120696d3ab48b75eb93cc0c27dd317a0fad5d977",
+    "afx_shell_stone_4.png": "03af9ff0984df4cec35325d5ff41790f6ff94f4ef48506729a5e251f1184019f",
+    "afx_ship_bcr.png": "e998ce67dfa7cffc89d318226e1cbfc66ad5a9d40ccff77b58a5ba51a1be3b6d",
+    "afx_ship_chicken_1.png": "ee76bc846543b2dfd8f1a1b4059e37e595d493062e8242881c2d2bff9482977e",
+    "afx_ship_chicken_9.png": "8bed51b0a21bc0ba3554885aa503ada53b8695d667a53929e0bd0c771fc1fec6",
+    "afx_ship_chicken_heavy.png": "7f439aebca75380a04f916428ed94996b1e78b4b98b35db1765d9e0becb98a04",
+    "afx_ship_corellihen_corvette.png": "8ec5a6607c42fd321f06fdb47f373c01ff413935e7a32cc46a184278792cc952",
+    "afx_ship_defihent.png": "c6f86e2aedead3abdb771234eccdf7bbe4da496339bcc19661ab79cbf4ec584d",
+    "afx_ship_galeggtica.png": "96562be08c9cd16814384366e7a4fe7d79d991fa9abd353ccd0df28146fe2bb4",
+    "afx_ship_henerprise.png": "4f3102bab3ced3e0ec0b60740fe4612bc6ebade66c93f6bca27456d5aa4a494d",
+    "afx_ship_in_a_bottle_4.png": "f228ec4272cefe0152bbb304b01d0a1ea71897b6705e45c59d6f9824c4151ba6",
+    "afx_ship_millenium_chicken.png": "72a03a838c323f9e6734f9ee757ca5fc901af774b890ccaeced5e79793c9bd8a",
+    "afx_ship_voyegger.png": "3c381ecead9a20b63247509a6024a6da7b022e9f8f608e6988e599189b9f91ae",
+    "afx_solar_titanium_3.png": "322fb90f5c00434181fc31f1d9948b9d99f8cf8ebda7835aa5c4951f3fb3f594",
+    "afx_soul_stone_4.png": "88848d4eb73d409fdb6435b210aa6f6bb9b62f8b26ee4d576c1658c2969e0bec",
+    "afx_tachyon_deflector_4.png": "f1710361a8193604dfb098732f8fcd9fe41cf2d3254e25c607c1f791e499193c",
+    "afx_tachyon_stone_4.png": "d94baf505d3016d45d581cf888b008b50214b82320ec3bb74d0c7c26536a4e72",
+    "afx_tau_ceti_geode_3.png": "42fa3457d5854be7e97db727caa75895ced67e9f0e703c1c1ee8a6d488ae0184",
+    "afx_terra_stone_4.png": "c29d0372b7d0b88ac089acae586de9cd341777097d1a8ce9fc97f316ee195cc1",
+    "afx_the_chalice_4.png": "8dc9729a4ffc6fdbfa0f5f9472db92176c0b4e1d34afb3b01d785e5d69b9b444",
+    "afx_titanium_actuator_4.png": "c0c5d6b999ab060a401a7544d195e165106c50d5a93de51e880378e3cf0bb55d",
+    "afx_tungsten_ankh_4.png": "05db42fb01b82b29979919733170951c67babb9f115db36e585b54ba7f9a00b1",
+    "afx_vial_martian_dust_4.png": "5910582a38e20d78e5a60c5e773abec197405cbad2f0d93f6e86237478e02352"
+  }
+}
