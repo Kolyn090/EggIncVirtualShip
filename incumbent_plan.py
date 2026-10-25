@@ -4,6 +4,7 @@ import json
 import math
 import pandas as pd
 from schedule_validation import validate_schedule
+from fuel_inventory import fixed_fuel
 
 
 def load_plan(directory, *, mission, available, hours, phases, event_phases, sleeps,
@@ -44,7 +45,7 @@ def load_plan(directory, *, mission, available, hours, phases, event_phases, sle
                       getattr(args,'max_launches_per_hour',0),args.days*24,dict(zip(available,hours)),args.parallel,event_phases,sleeps,
                       max_total_launches=getattr(args,'max_total_launches',0),max_launches_per_day=getattr(args,'max_launches_per_day',0))
     used=[sum(fuel[available.index(r[2]),k] for r in schedule) for k in range(fuel.shape[1])]
-    blocks=[int(math.ceil(value/args.fuel_step-1e-9)) for value in used]
+    blocks=[0 if fixed_fuel(args) else int(math.ceil(value/args.fuel_step-1e-9)) for value in used]
     validate_resources(schedule,counts,groups,outputs,inventory,rate,args.event_multiplier,available,fuel,
-                       [n*args.fuel_step for n in blocks],args.fuel_step,args.fuel)
+                       [n*args.fuel_step for n in blocks],args.fuel_step,args.fuel,getattr(args,'fixed_inventory',None))
     return schedule,counts,blocks

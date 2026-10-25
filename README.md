@@ -37,6 +37,26 @@ Run the tests with:
 python -m unittest discover -s tests -v
 ```
 
+### Plan from existing fuel inventory
+
+The optional `--fuel-mode existing_inventory` uses fixed starting Virtue fuel
+with no replenishment. The default retains the existing four-fuel allocation
+budget and 5T increments. Supply stock with repeatable `--initial-fuel` values:
+
+```sh
+.venv/bin/python optimize_reggference.py --fuel-mode existing_inventory \
+  --initial-fuel curiosity=120T --initial-fuel kindness=80T \
+  --initial-fuel resilience=250B --initial-fuel integrity=50T \
+  --initial-fuel humility=100T --target ankh-4 --days 26
+```
+
+All five Virtue types are checked, including actual Humility costs. Missing
+types are zero. B/T quantities are exact; plain new stock values are eggs,
+while existing `--fuel 500` still means 500T. The runner adds `FUEL_MODE` and
+`INITIAL_FUEL` settings. Dashboards show starting, consumed and remaining fuel
+without changing the offline checklist or saved progress. See the
+[complete configuration, units, outputs and validation guide](docs/FUEL_INVENTORY.md).
+
 ### Offline mission dashboard app
 
 The installable app in `pwa/` keeps exactly one active mission plan:

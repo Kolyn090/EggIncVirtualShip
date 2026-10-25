@@ -47,6 +47,17 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(passed[-4:],['--max-total-launches','20','--max-launches-per-day','3'])
             failed=subprocess.run(command,env=dict(os.environ,RUNNER_TEST_EXIT='7'),capture_output=True)
             self.assertEqual(failed.returncode,7)
+            configured_stock=script.replace('INITIAL_FUEL=()', 'INITIAL_FUEL=("curiosity=120T" "humility=1T")')
+            (root/'run_optimizer.sh').write_text(configured_stock)
+            stock_run=subprocess.run(['bash',str(root/'run_optimizer.sh'),'--fuel-mode','existing_inventory',
+                                      '--initial-fuel','curiousity=80T'],cwd='/tmp',text=True,capture_output=True)
+            self.assertEqual(stock_run.returncode,0,stock_run.stderr)
+            stock_args=json.loads(stock_run.stdout)['args']
+            self.assertIn('humility=1T',stock_args)
+            self.assertIn('curiousity=80T',stock_args)
+            self.assertNotIn('curiosity=120T',stock_args)
+            default_run=subprocess.run(['bash',str(root/'run_optimizer.sh'),'--fuel-mode','default'],text=True,capture_output=True)
+            self.assertNotIn('--initial-fuel',json.loads(default_run.stdout)['args'])
 
     def test_real_targets_inventory_and_errors(self):
         inventory=ROOT/'data/inventory.csv'

@@ -1,8 +1,8 @@
 # One active mission plan, offline
 
 The PWA lives in `pwa/`. It is a static app; it needs no API, user account,
-optimizer process, or plan-upload server. The optimizer, dashboard generator,
-and mission schedules are unchanged.
+optimizer process, or plan-upload server. Imports preserve the optimizer's
+mission data and schedules.
 
 ## Open and install
 
@@ -171,6 +171,15 @@ When updating the local Henliner image, update its recorded checksum in
 `pwa/assets/egginc/manifest.json`, run `npm run build:pwa`, and commit the source
 and generated files together. Production still serves only static `pwa/` assets.
 
+## Plans using stored fuel
+
+The optimizer's optional `--fuel-mode existing_inventory` exports fixed Virtue
+fuel stock, planned consumption and remaining fuel for all five types. The PWA
+shows this information in B/T notation with the same launch checklist. These
+are totals after all planned launches; checkmarks do not alter fuel inventory.
+Older plans without fuel-mode fields retain the default four-fuel display.
+See [fuel modes, input formats and complete examples](FUEL_INVENTORY.md).
+
 ## Progress backups
 
 The dashboard's existing **Export progress** and **Import progress** buttons
@@ -207,7 +216,7 @@ installation has not been tested; the mobile layout is tested in Chromium.
 - `plan.mjs` reads the exported JSON directly from the HTML string without
   putting imported markup into a DOM. It validates the data and calculates
   the existing dashboard's exact progress-backup identity.
-- `dashboard-template.mjs` is the unchanged trusted dashboard template bundled
+- `dashboard-template.mjs` is the trusted dashboard template copied exactly
   from `build_plan_dashboard.py`. Only this code runs in an opaque-origin
   sandboxed frame. The small storage bridge directs checklist writes to the
   parent record and validates their source, session token, plan ID and keys.
@@ -219,8 +228,7 @@ installation has not been tested; the mobile layout is tested in Chromium.
   discarded so iframe Back history cannot become a plan switcher.
 - `checklist.mjs` adds the PWA-only completion highlight, live timestamp labels,
   timestamp-aware compatible backups, icon cards and compact mobile styles around the
-  unchanged trusted template. The optimizer, source dashboard generator and
-  mission scheduling logic are untouched.
+  trusted template. PWA presentation never changes imported mission schedules.
 - `icons.mjs` maps verified optimizer identifiers to the bundled source catalog.
   `egginc-icons.mjs` is generated from the local PNGs and manifest; no asset
   downloads or third-party services are used by the deployed app.
@@ -250,7 +258,11 @@ npx playwright install chromium
 PLAYWRIGHT_CHROMIUM_EXECUTABLE=/path/to/chromium npm run test:pwa
 ```
 
-Fourteen browser tests cover local import, auto-saving check and uncheck, normal
+The browser suite also generates an actual fixed-fuel optimizer export using
+`.venv/bin/python` (or `python3` when absent). Install `requirements.txt` in
+that Python environment before running browser tests. Production remains static.
+
+Fifteen browser tests cover local import, auto-saving check and uncheck, normal
 reload, a full persistent-profile browser restart while offline, offline close
 and reimport, blocked replacement, cancellation/confirmed deletion, stale
 writes, concurrent windows, explicit progress backups, untrusted HTML,
@@ -267,6 +279,9 @@ Henliner coverage uses all three mission lengths, checks its local artwork and
 badge colors across checklist/summary/schedule, restores progress after reload,
 and verifies readable fallback when the Henliner image fails. The offline
 browser-restart test also restores Henliner icons and S/M/E badges.
+The fixed-fuel test imports a real optimizer export, checks all five fuel rows,
+B/T totals and icons/badges, then saves, reloads and restores a progress backup
+with the browser offline.
 Eight PWA Node tests cover parsing, malformed input, data preservation, backup-key
 compatibility, script escaping, actual data-to-icon mappings, highest tiers,
 source/embedded byte checksums and complete service-worker asset coverage.
@@ -276,13 +291,14 @@ bundle exactly matches the existing dashboard design and behavior.
 Verified commands for this implementation:
 
 - `npm run build:pwa`
-- `npm run test:pwa` — 14 real Chromium browser tests passed.
-- `PWA_TEST_SUBPATH=1 npm run test:pwa` — same 14 tests at `/EggIncVirtualShip/`.
+- `npm run test:pwa` — 15 real Chromium browser tests passed.
+- `PWA_TEST_SUBPATH=1 npm run test:pwa` — same 15 tests at `/EggIncVirtualShip/`.
 - `npm test` — 17 Node tests passed, including the existing source-data tests.
-- `.venv/bin/python -m unittest discover -s tests -v` — 66 tests passed.
+- `.venv/bin/python -m unittest discover -s tests -v` — 84 tests passed.
 
 A real 360-mission HTML export was also imported on a 390×844 viewport. Its
 stored mission data matched the source exactly; check/save/reload and timeline
 scrolling passed. The existing runner test now uses an explicit 40-launch test
 fixture rather than depending on the user's configurable 360-launch default.
-The actual runner configuration and optimizer sources were not changed.
+Runner defaults remain configurable; the PWA does not run optimization or
+adjust imported launch times.

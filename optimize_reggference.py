@@ -18,6 +18,8 @@ from solver_backend import milp, backend_name, feasible_vector
 from mission_profiles import load_recipes,expand_profiles,prune_dominated_options
 from scipy.sparse import coo_matrix
 from schedule_validation import validate_launch_rate, validate_schedule
+from fuel_inventory import (FuelInventory, fixed_fuel, fuel_names, parse_initial_fuel,
+                            decimal_value, TRILLION)
 
 FUELS=('curiousity','kindness','resilence','integrity')
 TARGET='metronome-4'
@@ -157,9 +159,10 @@ def resource_upper_bound(args,available,hours,fuel,phases,mats,groups,outputs,in
     enlarges the feasible set; this is a craft bound, never a schedule.
     """
     started=time.monotonic();boosts=sorted({b for _,_,b in phases});ns=len(available)
-    choices=[(b,j) for b in boosts for j in range(ns)];n=len(choices)+len(groups)+len(FUELS)
+    names=fuel_names(args)
+    choices=[(b,j) for b in boosts for j in range(ns)];n=len(choices)+len(groups)+len(names)
     recipe_cols={rid:len(choices)+i for i,(rid,_) in enumerate(groups)}
-    blocks=list(range(n-len(FUELS),n));rows=[];upper=[]
+    blocks=list(range(n-len(names),n));rows=[];upper=[]
     for material in mats:
         row=np.zeros(n)
         for col,(boost,j) in enumerate(choices):row[col]=-rate.get((available[j],material),0)*(args.event_multiplier if boost else 1)
@@ -168,11 +171,17 @@ def resource_upper_bound(args,available,hours,fuel,phases,mats,groups,outputs,in
             for r in g.itertuples():
                 if r.ingredient==material:row[recipe_cols[rid]]+=float(r.quantity)
         rows.append(row);upper.append(inventory.get(material,0))
-    for k,block in enumerate(blocks):
-        row=np.zeros(n);row[block]=-args.fuel_step
-        for col,(boost,j) in enumerate(choices):row[col]=fuel[j,k]
-        rows.append(row);upper.append(0.)
-    row=np.zeros(n);row[blocks]=1;rows.append(row);upper.append(np.floor(args.fuel/args.fuel_step+1e-9))
+    if fixed_fuel(args):
+        for costs,capacity in args.fixed_inventory.rows:
+            row=np.zeros(n)
+            for col,(_,j) in enumerate(choices):row[col]=costs[j]
+            rows.append(row);upper.append(capacity)
+    else:
+        for k,block in enumerate(blocks):
+            row=np.zeros(n);row[block]=-args.fuel_step
+            for col,(boost,j) in enumerate(choices):row[col]=fuel[j,k]
+            rows.append(row);upper.append(0.)
+        row=np.zeros(n);row[blocks]=1;rows.append(row);upper.append(np.floor(args.fuel/args.fuel_step+1e-9))
     for boost in boosts:
         for threshold in service_thresholds(hours):
             row=np.zeros(n)
@@ -187,8 +196,12 @@ def resource_upper_bound(args,available,hours,fuel,phases,mats,groups,outputs,in
         row=np.zeros(n);row[:len(choices)]=1;rows.append(row);upper.append(min(cap for cap in caps if cap))
     objective=np.zeros(n);goal=next(rid for rid,_ in groups if outputs[rid]==target);objective[recipe_cols[goal]]=-1
     if hasattr(args,'construction_totals'):args.construction_totals.append(time.monotonic()-started)
+    high=np.full(n,np.inf)
+    if fixed_fuel(args):
+        high[blocks]=0
+        for col,(_,j) in enumerate(choices):high[col]=args.fixed_inventory.launch_bound(j)
     result=run_milp(args,objective,label='Craft upper bound (integer resources)' if integer else 'Craft upper bound (resource LP)',seconds=seconds,
-                    integrality=np.ones(n) if integer else np.zeros(n),bounds=Bounds(np.zeros(n),np.full(n,np.inf)),
+                    integrality=np.ones(n) if integer else np.zeros(n),bounds=Bounds(np.zeros(n),high),
                     constraints=LinearConstraint(np.asarray(rows),-np.inf,upper))
     result.resource_choices=choices
     result.resource_recipe_cols=recipe_cols
@@ -254,7 +267,7 @@ def polish_model(args, incumbent, matrix, lbs, ubs, low, up, integrality, goal, 
         row=csr_matrix(objective.reshape(1,-1))
         candidate_matrix=vstack([matrix,row],format='csr')
         candidate_lbs=np.r_[lbs,-np.inf];candidate_ubs=np.r_[ubs,bound+1e-7]
-        weights={'launch count':.45,'fuel allocation':.25,'mission completion time':.25,'earlier launches':.05,'earlier launch phases':.05}
+        weights={'launch count':.45,'fuel allocation':.25,'fuel consumption':.25,'mission completion time':.25,'earlier launches':.05,'earlier launch phases':.05}
         pending=sum(weights.get(item[0],1.) for item in objectives[number:])
         stage_args.solver_seconds=remaining*weights.get(name,1.)/pending
         result=run_milp(stage_args,objective,label='Secondary: '+name,maximize=False,objective_name=name,
@@ -341,8 +354,11 @@ def solve_timed_launches(args, available, hours, fuel, phases, mats, groups, out
     # Two independent safe bounds on the number of completed missions.
     nlaunch = min(int(np.ceil(H) * limit * args.parallel), int(args.parallel * np.floor(H / min(hours))))
     minimum_fuel=float(np.min(fuel.sum(axis=1)))
-    if minimum_fuel>0:
+    if minimum_fuel>0 and not fixed_fuel(args):
         nlaunch=min(nlaunch,int(np.floor(args.fuel/minimum_fuel+1e-9)))
+    if fixed_fuel(args):
+        caps=[args.fixed_inventory.launch_bound(j) for j in range(len(available))]
+        if all(np.isfinite(cap) for cap in caps):nlaunch=min(nlaunch,sum(caps))
     total_cap=getattr(args,'max_total_launches',0);daily_cap=getattr(args,'max_launches_per_day',0)
     if total_cap:nlaunch=min(nlaunch,total_cap)
     if daily_cap:nlaunch=min(nlaunch,int(np.ceil(args.days))*daily_cap)
@@ -375,7 +391,7 @@ def solve_timed_launches(args, available, hours, fuel, phases, mats, groups, out
     crafts={rid:var(discrete=True) for rid,_ in groups}
     makespan=var(hi=H)
     active_times=[var(hi=H) for _ in range(nlaunch)]
-    blocks=[var(hi=int(np.floor(args.fuel/args.fuel_step+1e-9)),discrete=True) for _ in FUELS]
+    blocks=[var(hi=0 if fixed_fuel(args) else int(np.floor(args.fuel/args.fuel_step+1e-9)),discrete=True) for _ in fuel_names(args)]
     ri=[];ci=[];values=[];lbs=[];ubs=[]
     def constraint(row,lo=-np.inf,hi=np.inf):
         index=len(lbs)
@@ -454,12 +470,19 @@ def solve_timed_launches(args, available, hours, fuel, phases, mats, groups, out
             for r in g.itertuples():
                 if r.ingredient==mat:row[crafts[rid]]+=float(r.quantity)
         constraint(row,hi=inventory.get(mat,0))
-    for k in range(len(FUELS)):
-        row={blocks[k]:-args.fuel_step}
+    if fixed_fuel(args):
+        for costs,capacity in args.fixed_inventory.rows:
+            constraint({col:costs[j] for choices_i in choices_by_launch for (_,j),col in choices_i.items()},hi=capacity)
         for choices_i in choices_by_launch:
-            row.update({col:fuel[j,k] for (p,j),col in choices_i.items()})
-        constraint(row,hi=0)
-    constraint({col:1 for col in blocks},hi=int(np.floor(args.fuel/args.fuel_step+1e-9)))
+            for (_,j),col in choices_i.items():
+                if args.fixed_inventory.launch_bound(j)<1:upper[col]=0
+    else:
+        for k in range(len(FUELS)):
+            row={blocks[k]:-args.fuel_step}
+            for choices_i in choices_by_launch:
+                row.update({col:fuel[j,k] for (p,j),col in choices_i.items()})
+            constraint(row,hi=0)
+        constraint({col:1 for col in blocks},hi=int(np.floor(args.fuel/args.fuel_step+1e-9)))
     objective=np.zeros(len(lower))
     goal=next(rid for rid,_ in groups if outputs[rid]==target)
     objective[crafts[goal]]=-1
@@ -515,28 +538,40 @@ def solve_timed_launches(args, available, hours, fuel, phases, mats, groups, out
         validate_schedule([dict(zip(['slot','phase','ship','event_bonus','start_hour','end_hour'],r)) for r in schedule],limit)
         return schedule, {rid:int(round(x[col])) for rid,col in crafts.items()}, [int(round(x[col])) for col in blocks]
     def validate_timed(proposal):
-        rows=extract(proposal)[0]
+        rows,counts,_=extract(proposal)
         records=[dict(zip(['slot','phase','ship','event_bonus','start_hour','end_hour'],row)) for row in rows]
         validate_schedule(records,limit,H,dict(zip(available,hours)),args.parallel,phases,max_total_launches=getattr(args,'max_total_launches',0),max_launches_per_day=getattr(args,'max_launches_per_day',0))
+        if fixed_fuel(args):args.fixed_inventory.used(rows)
     def polish(deadline=None):
         polish_args=copy(args)
         if deadline is not None:polish_args.polish_deadline=deadline
         allocation=np.zeros(len(lower));allocation[blocks]=args.fuel_step
+        if fixed_fuel(args):
+            allocation[blocks]=0
+            for choices_i in choices_by_launch:
+                for (_,j),col in choices_i.items():allocation[col]=args.fixed_inventory.effort_costs[j]
         count_obj=np.zeros(len(lower))
         for choices_i in choices_by_launch:
             for (boost,j),col in choices_i.items():count_obj[col]=1
         completion=np.zeros(len(lower));completion[makespan]=1
         earlier=np.zeros(len(lower));earlier[active_times]=1
         improved,stages=polish_model(polish_args,result.x,matrix,np.array(lbs),np.array(ubs),lower,upper,np.array(integer),crafts[goal],
-                    [('launch count',count_obj),('fuel allocation',allocation),('mission completion time',completion),
+                    [('launch count',count_obj),('fuel consumption' if fixed_fuel(args) else 'fuel allocation',allocation),('mission completion time',completion),
                      ('earlier launches',earlier)],('full continuous timed model' if nlaunch==safe_cap else f'continuous timed model, launch cap {nlaunch} (safe bound {safe_cap})'),validate=validate_timed)
-        result.secondary_stages=stages
+        result.secondary_stages=args.fixed_inventory.physical_stages(stages) if fixed_fuel(args) else stages
         return extract(improved)
     result.polish_schedule=polish
-    schedule,craft_counts,fuel_blocks=extract(x)
-    validate_timed(x)
-    validate_resources(schedule,craft_counts,groups,outputs,inventory,rate,args.event_multiplier,available,fuel,
-                       np.asarray(fuel_blocks)*args.fuel_step,args.fuel_step,args.fuel)
+    try:
+        schedule,craft_counts,fuel_blocks=extract(x)
+        validate_timed(x)
+        validate_resources(schedule,craft_counts,groups,outputs,inventory,rate,args.event_multiplier,available,fuel,
+                           np.asarray(fuel_blocks)*args.fuel_step,args.fuel_step,args.fuel,getattr(args,'fixed_inventory',None))
+    except ValueError as exc:
+        if not fixed_fuel(args):raise
+        # Reject numerical candidates without losing the orchestration's best
+        # validated schedule, and never turn rejection into an infeasibility proof.
+        result.x=None;result.status=1;result.message='Candidate rejected by independent validation: '+str(exc)
+        raise NoFeasibleSchedule(result,nlaunch,safe_cap) from exc
     return result,schedule,craft_counts,fuel_blocks
 
 
@@ -572,26 +607,28 @@ def remove_surplus_missions(schedule, craft_counts, groups, outputs, inventory, 
     return sorted(kept,key=lambda r:(r[4],r[0])),len(removed),removed_crafts
 
 
-def validate_resources(schedule, craft_counts, groups, outputs, inventory, rate, multiplier, available, fuel, allocation, step, budget):
+def validate_resources(schedule, craft_counts, groups, outputs, inventory, rate, multiplier, available, fuel, allocation, step, budget, fuel_inventory=None):
     """Recompute resources independently from the actual exported missions."""
     material=defaultdict(float,inventory)
     for rid,g in groups:
         material[outputs[rid]]+=craft_counts[rid]
         for r in g.itertuples():material[r.ingredient]-=craft_counts[rid]*float(r.quantity)
-    used=np.zeros(len(FUELS))
+    used=np.zeros(fuel.shape[1])
     for row in schedule:
         used+=fuel[available.index(row[2])]
         for (ship,mat),value in rate.items():
             if ship==row[2]:material[mat]+=value*(multiplier if row[3] else 1)
     allocation=np.asarray(allocation,dtype=float)
-    if not np.isfinite(allocation).all() or (allocation<-1e-7).any() or (used>allocation+1e-7).any() or allocation.sum()>budget+1e-7:
+    if fuel_inventory is not None:
+        fuel_inventory.used(schedule)  # exact rational recomputation; zero overspend tolerance
+    elif not np.isfinite(allocation).all() or (allocation<-1e-7).any() or (used>allocation+1e-7).any() or allocation.sum()>budget+1e-7:
         raise ValueError('Independent validation failed: fuel allocation/consumption')
-    if (np.abs(allocation/step-np.rint(allocation/step))>1e-7).any():raise ValueError('Independent validation failed: fuel increments')
+    if fuel_inventory is None and (np.abs(allocation/step-np.rint(allocation/step))>1e-7).any():raise ValueError('Independent validation failed: fuel increments')
     if any(value<-1e-7 for value in material.values()):raise ValueError('Independent validation failed: negative material balance')
     return material,used
 
 
-def objective_guarantees(result, craft_count, allocated, completion, launches=0):
+def objective_guarantees(result, craft_count, allocated, completion, launches=0, fuel_stage='fuel allocation'):
     """A local/capped optimum is never presented as a global certificate."""
     stages=getattr(result,'secondary_stages',[])
     def stage(name,value):
@@ -605,7 +642,7 @@ def objective_guarantees(result, craft_count, allocated, completion, launches=0)
     effort=stage('launch count',launches)
     effort['fixed_craft_count']=craft_count
     if launches==0:effort.update(proven=True,bound=0.,gap=0.,scope='nonnegative launch lower bound attained')
-    fuel=stage('fuel allocation',allocated)
+    fuel=stage(fuel_stage,allocated)
     fuel['conditional_proven']=fuel['proven']
     fuel['proven']=fuel['proven'] and effort['proven']
     fuel['fixed_craft_count']=craft_count
@@ -625,6 +662,13 @@ def solve(args):
     args.optimization_started=model_started
     args.solver_deadline=model_started+args.solver_seconds
     args.mode=getattr(args,'mode','balanced')
+    args.fuel_mode=getattr(args,'fuel_mode','default')
+    if args.fuel_mode not in {'default','existing_inventory'}:raise ValueError('Unknown fuel mode')
+    initial_fuel=getattr(args,'initial_fuel',None)
+    if initial_fuel and not fixed_fuel(args):raise ValueError('--initial-fuel requires --fuel-mode existing_inventory')
+    if fixed_fuel(args):parse_initial_fuel(initial_fuel)
+    args.fixed_inventory=None
+    names=fuel_names(args)
     args.overall_deadline=args.solver_deadline+(getattr(args,'polish_seconds',10.) if args.mode=='balanced' else 0.)
     args.model_construction_seconds=0.
     args.construction_totals=[]
@@ -632,7 +676,7 @@ def solve(args):
     target=getattr(args, 'target', TARGET)
     base=Path(args.data_dir)
     if not (base/'mission.csv').exists() and (base/'data'/'mission.csv').exists():base=base/'data'
-    mission=pd.read_csv(base/'mission.csv').set_index('ship')
+    mission=pd.read_csv(base/'mission.csv',dtype={name:str for name in names} if fixed_fuel(args) else None).set_index('ship')
     drops=pd.read_csv(base/args.expectations)
     recipes=load_recipes(base)
     if args.ships:
@@ -680,14 +724,17 @@ def solve(args):
     phases=launch_phases(event_phases,sleeps,bool(getattr(args,'max_launches_per_day',0)))
     ns=len(available);np_=len(phases);slots=args.parallel
     hours=np.array([duration_hours(mission.loc[s,'duration']) for s in available]);
-    try:fuel=np.array([[float(mission.loc[s,f]) for f in FUELS] for s in available])
+    if fixed_fuel(args):args.fixed_inventory=FuelInventory(initial_fuel,mission,available)
+    print('[Fuel mode] '+('Existing inventory: fixed five-fuel stock; no replenishment or 5T allocation rounding' if fixed_fuel(args) else 'Default: four-fuel allocation budget'),flush=True)
+    try:fuel=np.array([[float(mission.loc[s,f]) for f in names] for s in available])
     except (KeyError,TypeError,ValueError) as exc:raise ValueError('Mission fuel columns require explicit numeric values; missing fuel is not zero') from exc
     if not np.isfinite(fuel).all() or (fuel<0).any():
         raise ValueError('Mission fuel values must be explicit finite nonnegative numbers; missing fuel is not zero')
     if not np.isfinite(hours).all() or (hours<=0).any():raise ValueError('Mission durations must be finite and positive')
     fuel_sum=fuel.sum(axis=1)
-    zero_fuel_ships=sorted({mission.loc[ship,'base_ship'] for ship,total in zip(available,fuel_sum) if total==0})
-    if zero_fuel_ships:print('[Inputs] Explicit zero fuel in mission.csv: '+', '.join(zero_fuel_ships),flush=True)
+    zero_costs=[sum(row)==0 for row in args.fixed_inventory.costs] if fixed_fuel(args) else fuel_sum==0
+    zero_fuel_ships=sorted({mission.loc[ship,'base_ship'] for ship,is_zero in zip(available,zero_costs) if is_zero})
+    if zero_fuel_ships:print('[Inputs] Explicit zero fuel '+('(all five inventory axes)' if fixed_fuel(args) else '(default budget axes; Humility excluded)')+': '+', '.join(zero_fuel_ships),flush=True)
     launch_limit=getattr(args,'max_launches_per_hour',0)
     needs_timed=bool(launch_limit and min(hours)*launch_limit<1)
     if launch_limit and not needs_timed:
@@ -698,7 +745,7 @@ def solve(args):
     start_size=slots*np_
     rec_size=len(groups)
     fuel_blocks_offset=count_size+last_size+start_size+rec_size
-    n=fuel_blocks_offset+len(FUELS)+1
+    n=fuel_blocks_offset+len(names)+1
     makespan=n-1
     def block(k):return fuel_blocks_offset+k
     def count(slot,p,j):return (slot*np_+p)*ns+j
@@ -735,14 +782,18 @@ def solve(args):
         constraint(row,hi=inventory.get(mat,0))
     # Each fuel kind must be provisioned in whole 5T (or --fuel-step) blocks.
     # Individual launches still use their actual fractional-T costs.
-    for k,kind in enumerate(FUELS):
-        row=defaultdict(float)
-        for slot in range(slots):
-            for p in range(np_):
-                for j in range(ns):row[count(slot,p,j)]+=fuel[j,k]
-        row[block(k)]-=args.fuel_step
-        constraint(row,hi=0)
-    constraint({block(k):1 for k in range(len(FUELS))},hi=int(np.floor(args.fuel/args.fuel_step+1e-9)))
+    if fixed_fuel(args):
+        for costs,capacity in args.fixed_inventory.rows:
+            constraint({count(slot,p,j):costs[j] for slot in range(slots) for p in range(np_) for j in range(ns)},hi=capacity)
+    else:
+        for k,kind in enumerate(names):
+            row=defaultdict(float)
+            for slot in range(slots):
+                for p in range(np_):
+                    for j in range(ns):row[count(slot,p,j)]+=fuel[j,k]
+            row[block(k)]-=args.fuel_step
+            constraint(row,hi=0)
+        constraint({block(k):1 for k in range(len(names))},hi=int(np.floor(args.fuel/args.fuel_step+1e-9)))
     eps=1/3600
     # All phases occur in order for each ship slot, with idle gaps if needed.
     # last indicators designate which mission starts LAST in that phase.
@@ -807,8 +858,9 @@ def solve(args):
             for j in range(ns):
                 up[last(slot,p,j)]=1
                 up[count(slot,p,j)]=min(max_launches[j],total_cap or np.inf,daily_cap or np.inf,int(np.ceil((phases[p][1]-phases[p][0])/hours[j]-1e-10)))
-                if fuel_sum[j]>0:up[count(slot,p,j)]=min(up[count(slot,p,j)],int(np.floor(args.fuel/fuel_sum[j]+1e-9)))
-    for k in range(len(FUELS)):up[block(k)]=int(np.floor(args.fuel/args.fuel_step+1e-9))
+                if fixed_fuel(args):up[count(slot,p,j)]=min(up[count(slot,p,j)],args.fixed_inventory.launch_bound(j))
+                elif fuel_sum[j]>0:up[count(slot,p,j)]=min(up[count(slot,p,j)],int(np.floor(args.fuel/fuel_sum[j]+1e-9)))
+    for k in range(len(names)):up[block(k)]=0 if fixed_fuel(args) else int(np.floor(args.fuel/args.fuel_step+1e-9))
     up[makespan]=H
     integrality=np.ones(n);integrality[count_size+last_size:recipes_offset]=0;integrality[makespan]=0
     goal_rid=next((rid for rid,_ in groups if outputs[rid]==target),None)
@@ -840,8 +892,8 @@ def solve(args):
         validate_schedule(records,launch_limit,H,dict(zip(available,hours)),slots,event_phases,sleeps,
                           max_total_launches=total_cap,max_launches_per_day=daily_cap)
         crafts={rid:int(round(proposal[ridcol[rid]])) for rid,_ in groups}
-        allocation=np.array([round(proposal[block(k)])*args.fuel_step for k in range(len(FUELS))])
-        validate_resources(witness,crafts,groups,outputs,inventory,rate,args.event_multiplier,available,fuel,allocation,args.fuel_step,args.fuel)
+        allocation=np.array([round(proposal[block(k)])*args.fuel_step for k in range(len(names))])
+        validate_resources(witness,crafts,groups,outputs,inventory,rate,args.event_multiplier,available,fuel,allocation,args.fuel_step,args.fuel,args.fixed_inventory)
         return witness
 
     supplied_plan=None
@@ -958,7 +1010,7 @@ def solve(args):
                     num=int(x[count(slot,p,j)])
                     if num:detail.append({'slot':slot+1,'phase':p+1,'ship':ship,'event_bonus':boost,'launches':num,
                         'total_hours':num*hours[j],'total_fuel_T':num*fuel_sum[j],
-                        **{f+'_T':num*fuel[j,k] for k,f in enumerate(FUELS)}})
+                        **{f+'_T':num*fuel[j,k] for k,f in enumerate(names)}})
     else:
         # A small restriction supplies an incumbent, not a craft upper bound.
         # Leave most sleep phases empty initially; the full model can use them.
@@ -1005,6 +1057,9 @@ def solve(args):
                     for j in range(ns):seed_up[count(slot,p,j)]=seed_up[last(slot,p,j)]=0
         seed=run_milp(args,obj,label='Stage 1 seed (restricted phases)',seconds=min(4.,args.solver_seconds*.3),
                       integrality=integrality,bounds=Bounds(low,seed_up),constraints=constraints,incumbent=zero)
+        if fixed_fuel(args) and seed.x is not None:
+            try:validate_aggregate(seed.x)
+            except ValueError:seed.x=None
         incumbent=seed.x if seed.x is not None else zero
         if supplied_vector is not None and obj@supplied_vector<obj@incumbent:incumbent=supplied_vector.copy()
         if args.mode=='max-crafts':
@@ -1028,6 +1083,11 @@ def solve(args):
                 if relaxation.status==0:global_lp_bound=relaxation.fun
             result=run_milp(args,obj,label='Stage 1 crafts (full model)',seconds=args.solver_deadline-time.monotonic(),
                             integrality=integrality,bounds=Bounds(low,up),constraints=constraints,incumbent=incumbent)
+            if fixed_fuel(args) and result.x is not None:
+                try:validate_aggregate(result.x)
+                except ValueError:
+                    result.x=None;result.fun=None;result.status=1
+                    result.message='Numerical candidate rejected by exact fuel/schedule validation; retaining validated incumbent'
             if global_lp_bound is not None:
                 dual=getattr(result,'mip_dual_bound',None)
                 result.mip_dual_bound=max(global_lp_bound,dual) if dual is not None and np.isfinite(dual) else global_lp_bound
@@ -1043,7 +1103,12 @@ def solve(args):
                 result.mip_gap=((-dual+result.fun)/abs(result.fun) if result.fun else (0. if dual==0 else None)) if dual is not None and np.isfinite(dual) else None
 
         allocation=np.zeros(n)
-        for k in range(len(FUELS)):allocation[block(k)]=args.fuel_step
+        for k in range(len(names)):allocation[block(k)]=args.fuel_step
+        if fixed_fuel(args):
+            allocation[:]=0
+            for slot in range(slots):
+                for p in range(np_):
+                    for j in range(ns):allocation[count(slot,p,j)]=args.fixed_inventory.effort_costs[j]
         earlier=np.zeros(n);mission_count=np.zeros(n)
         for slot in range(slots):
             for p,(a,b,boost) in enumerate(phases):
@@ -1055,12 +1120,12 @@ def solve(args):
         if args.mode=='max-crafts':x=result.x.copy();secondary_stages=[]
         else:
             x,secondary_stages=polish_model(args,result.x,A.tocsr(),np.array(lbs),np.array(ubs),low,up,integrality,ridcol[goal_rid],
-                     [('launch count',mission_count),('fuel allocation',allocation),('mission completion time',completion),
-                      ('earlier launch phases',earlier)],'exact aggregate model')
-        result.secondary_stages=secondary_stages
+                     [('launch count',mission_count),('fuel consumption' if fixed_fuel(args) else 'fuel allocation',allocation),('mission completion time',completion),
+                      ('earlier launch phases',earlier)],'exact aggregate model',validate=validate_aggregate if fixed_fuel(args) else None)
+        result.secondary_stages=args.fixed_inventory.physical_stages(secondary_stages) if fixed_fuel(args) else secondary_stages
         if np.max(np.abs(x[:count_size+last_size]-np.rint(x[:count_size+last_size])))>1e-4:
             raise RuntimeError('Nonintegral solution returned')
-        x[:count_size+last_size]=np.rint(x[:count_size+last_size]);x[recipes_offset:fuel_blocks_offset+len(FUELS)]=np.rint(x[recipes_offset:fuel_blocks_offset+len(FUELS)])
+        x[:count_size+last_size]=np.rint(x[:count_size+last_size]);x[recipes_offset:fuel_blocks_offset+len(names)]=np.rint(x[recipes_offset:fuel_blocks_offset+len(names)])
         detail=[];schedule=[]
         for slot in range(slots):
             actual_time=0.
@@ -1078,7 +1143,7 @@ def solve(args):
                 for j,num in enumerate(counts):
                     if num:detail.append({'slot':slot+1,'phase':p+1,'ship':available[j],'event_bonus':boost,'launches':num,
                                            'total_hours':num*hours[j], 'total_fuel_T':num*fuel_sum[j],
-                                           **{f+'_T':num*fuel[j,k] for k,f in enumerate(FUELS)}})
+                                           **{f+'_T':num*fuel[j,k] for k,f in enumerate(names)}})
     craft_counts={rid:int(round(x[ridcol[rid]])) for rid,_ in groups}
     schedule,removed_missions,removed_crafts=remove_surplus_missions(schedule,craft_counts,groups,outputs,inventory,rate,args.event_multiplier,target)
     if removed_missions or removed_crafts:
@@ -1089,16 +1154,21 @@ def solve(args):
     x[:count_size]=0
     for slot,p,ship,boost,t,end in schedule:x[count(slot-1,p-1,available.index(ship))]+=1
     for rid,value in craft_counts.items():x[ridcol[rid]]=value
-    for k in range(len(FUELS)):
+    for k in range(len(names)):
         used=sum(fuel[available.index(row[2]),k] for row in schedule)
-        x[block(k)]=int(np.ceil(used/args.fuel_step-1e-9))
+        x[block(k)]=0 if fixed_fuel(args) else int(np.ceil(used/args.fuel_step-1e-9))
     detail=[]
     for slot in range(slots):
         for p,(_,_,boost) in enumerate(phases):
             for j,ship in enumerate(available):
                 num=int(x[count(slot,p,j)])
                 if num:detail.append({'slot':slot+1,'phase':p+1,'ship':ship,'event_bonus':boost,'launches':num,
-                    'total_hours':num*hours[j],'total_fuel_T':num*fuel_sum[j],**{f+'_T':num*fuel[j,k] for k,f in enumerate(FUELS)}})
+                    'total_hours':num*hours[j],'total_fuel_T':num*fuel_sum[j],**{f+'_T':num*fuel[j,k] for k,f in enumerate(names)}})
+    if fixed_fuel(args):
+        for row in detail:
+            costs=args.fixed_inventory.costs[available.index(row['ship'])]
+            for k,name in enumerate(names):row[name+'_T']=decimal_value(costs[k]*row['launches']/TRILLION)
+            row['total_fuel_T']=decimal_value(sum(costs)*row['launches']/TRILLION)
     schedule_df=pd.DataFrame(schedule,columns=['slot','phase','ship','event_bonus','start_hour','end_hour'])
     for row in schedule_df.itertuples():
         a,b,boost=phases[row.phase-1]
@@ -1117,7 +1187,7 @@ def solve(args):
         made=sum(int(x[ridcol[rid]]) for rid,g in groups if outputs[rid]==mat)
         used=sum(int(x[ridcol[rid]])*float(r.quantity) for rid,g in groups for r in g.itertuples() if r.ingredient==mat)
         balance.append({'material_id':mat,'expected_drops':source,'crafted':made,'consumed':used,'expected_remaining':inventory.get(mat,0)+source+made-used,'starting_inventory':inventory.get(mat,0)})
-    plan=pd.DataFrame(detail, columns=['slot','phase','ship','event_bonus','launches','total_hours','total_fuel_T']+[f+'_T' for f in FUELS]);balance_df=pd.DataFrame(balance)
+    plan=pd.DataFrame(detail, columns=['slot','phase','ship','event_bonus','launches','total_hours','total_fuel_T']+[f+'_T' for f in names]);balance_df=pd.DataFrame(balance)
     result.upper_bound_crafts=getattr(result,'upper_bound_crafts',None)
     if result.upper_bound_crafts is None:
         dual=getattr(result,'mip_dual_bound',None)
@@ -1130,34 +1200,46 @@ def solve(args):
     print(f'Expected {target} crafts: {int(x[ridcol[goal_rid]])}')
     print(f'Already owned {target}: {inventory.get(target,0)}')
     print(f'Total achievable {target}: {inventory.get(target,0)+int(x[ridcol[goal_rid]])}')
-    print(f'Fuel used: {plan.total_fuel_T.sum() if len(plan) else 0:.3f} / {args.fuel:g} T')
-    fuel_allocation = pd.DataFrame([{'fuel':kind, 'used_T':sum(int(x[count(slot,p,j)])*fuel[j,k]
-        for slot in range(slots) for p in range(np_) for j in range(ns)),
-        'allocated_T':int(x[block(k)])*args.fuel_step} for k,kind in enumerate(FUELS)])
-    fuel_allocation['unused_T']=fuel_allocation.allocated_T-fuel_allocation.used_T
+    fuel_summary=args.fixed_inventory.summary(schedule) if fixed_fuel(args) else None
+    if fixed_fuel(args):
+        fuel_allocation=pd.DataFrame(fuel_summary)
+        print('Fuel inventory (fixed, no replenishment; exact validation, zero overspend tolerance):')
+        print(fuel_allocation[['fuel_name','starting','consumed','remaining','percentage_consumed']].fillna('—').to_string(index=False))
+    else:
+        print(f'Fuel used: {plan.total_fuel_T.sum() if len(plan) else 0:.3f} / {args.fuel:g} T')
+        fuel_allocation = pd.DataFrame([{'fuel':kind, 'used_T':sum(int(x[count(slot,p,j)])*fuel[j,k]
+            for slot in range(slots) for p in range(np_) for j in range(ns)),
+            'allocated_T':int(x[block(k)])*args.fuel_step} for k,kind in enumerate(names)])
+        fuel_allocation['unused_T']=fuel_allocation.allocated_T-fuel_allocation.used_T
     if (fuel_allocation.unused_T < -1e-5).any():raise RuntimeError('Fuel allocation inconsistent')
     checked_material,checked_fuel=validate_resources(schedule,craft_counts,groups,outputs,inventory,rate,args.event_multiplier,
-        available,fuel,fuel_allocation.allocated_T.to_numpy(),args.fuel_step,args.fuel)
+        available,fuel,fuel_allocation.allocated_T.to_numpy(),args.fuel_step,args.fuel,args.fixed_inventory)
     if any(abs(row.expected_remaining-checked_material[row.material_id])>1e-6 for row in balance_df.itertuples()):
         raise ValueError('Exported balances disagree with independent mission/resource validation')
-    print('Fuel allocation (in blocks of',f'{args.fuel_step:g}T):')
-    print(fuel_allocation.to_string(index=False, float_format=lambda v:f'{v:.3f}'))
-    print(f'Total allocated: {fuel_allocation.allocated_T.sum():.3f} / {args.fuel:g} T')
+    if not fixed_fuel(args):
+        print('Fuel allocation (in blocks of',f'{args.fuel_step:g}T):')
+        print(fuel_allocation.to_string(index=False, float_format=lambda v:f'{v:.3f}'))
+        print(f'Total allocated: {fuel_allocation.allocated_T.sum():.3f} / {args.fuel:g} T')
     print(f'Simultaneous ships: {args.parallel}; days: {args.days}; hypothetical events: {args.events}')
     for a,b,boost in event_phases:
         if boost:print(f'  Event: days {a/24:g} to {b/24:g}')
     if sleeps:
         print(f'Launch blackouts: {len(sleeps)} window(s)')
     completion=float(schedule_df.end_hour.max()) if len(schedule_df) else 0.
-    guarantees=objective_guarantees(result,int(x[ridcol[goal_rid]]),float(fuel_allocation.allocated_T.sum()),completion,len(schedule_df))
-    print(f'[Summary] Completion day {completion/24:.4f}; allocated fuel proven: {guarantees["allocated_fuel"]["proven"]}; completion proven: {guarantees["completion"]["proven"]}',flush=True)
+    guarantees=objective_guarantees(result,int(x[ridcol[goal_rid]]),float((fuel_allocation.used_T if fixed_fuel(args) else fuel_allocation.allocated_T).sum()),completion,len(schedule_df),fuel_stage='fuel consumption' if fixed_fuel(args) else 'fuel allocation')
+    if fixed_fuel(args):
+        guarantees['consumed_fuel']=guarantees['allocated_fuel']
+        guarantees['allocated_fuel']={'proven':True,'value':float(fuel_allocation.allocated_T.sum()),'scope':'fixed starting inventory; not an optimization decision'}
+    fuel_title='consumed fuel' if fixed_fuel(args) else 'allocated fuel'
+    fuel_proof=guarantees['consumed_fuel' if fixed_fuel(args) else 'allocated_fuel']['proven']
+    print(f'[Summary] Completion day {completion/24:.4f}; {fuel_title} proven: {fuel_proof}; completion proven: {guarantees["completion"]["proven"]}',flush=True)
     schedule_df['target']=schedule_df.ship.map(lambda key:mission.loc[key,'drop_target'])
     schedule_df['ship']=schedule_df.ship.map(lambda key:mission.loc[key,'base_ship'])
     plan['target']=plan.ship.map(lambda key:mission.loc[key,'drop_target'])
     plan['ship']=plan.ship.map(lambda key:mission.loc[key,'base_ship'])
     if args.output_dir:
         out=Path(args.output_dir);out.mkdir(parents=True,exist_ok=True)
-        (out/'plan_metadata.json').write_text(json.dumps({'target':target,'missing_drop_materials':missing_rates,'unknown_drop_materials':unknown_rates,'max_total_launches':getattr(args,'max_total_launches',0),'max_launches_per_day':getattr(args,'max_launches_per_day',0),'max_launches_per_hour':launch_limit,'launch_rate_scope':'per-slot','parallel':slots,'horizon_hours':H,'zero_fuel_ships':zero_fuel_ships,'drop_profile_source':profile_info,'targeting_profile_names':profile_info['target_names'],'optimization':{'mode':args.mode,'craft_search':getattr(result,'craft_search',[]),'status':int(result.status),'message':result.message,'gap':finite_or_none(getattr(result,'mip_gap',None)),'solver_runs':args.solver_runs,'upper_bound_crafts':getattr(result,'upper_bound_crafts',None),'secondary_stages':getattr(result,'secondary_stages',[]),'guarantees':guarantees,'removed_surplus_missions':removed_missions}},indent=2)+'\n',encoding='utf-8')
+        (out/'plan_metadata.json').write_text(json.dumps({'target':target,'fuel_mode':args.fuel_mode,'fuel_types':list(names),'fuel_inventory':fuel_summary,'fuel_inventory_totals':args.fixed_inventory.totals(schedule) if fixed_fuel(args) else None,'fuel_validation_tolerance_eggs':0 if fixed_fuel(args) else None,'missing_drop_materials':missing_rates,'unknown_drop_materials':unknown_rates,'max_total_launches':getattr(args,'max_total_launches',0),'max_launches_per_day':getattr(args,'max_launches_per_day',0),'max_launches_per_hour':launch_limit,'launch_rate_scope':'per-slot','parallel':slots,'horizon_hours':H,'zero_fuel_ships':zero_fuel_ships,'drop_profile_source':profile_info,'targeting_profile_names':profile_info['target_names'],'optimization':{'mode':args.mode,'craft_search':getattr(result,'craft_search',[]),'status':int(result.status),'message':result.message,'gap':finite_or_none(getattr(result,'mip_gap',None)),'solver_runs':args.solver_runs,'upper_bound_crafts':getattr(result,'upper_bound_crafts',None),'secondary_stages':getattr(result,'secondary_stages',[]),'guarantees':guarantees,'removed_surplus_missions':removed_missions}},indent=2,default=str)+'\n',encoding='utf-8')
         plan.to_csv(out/'launch_plan.csv',index=False)
         fuel_allocation.to_csv(out/'fuel_allocation.csv',index=False)
         schedule_df.to_csv(out/'schedule.csv',index=False)
@@ -1185,9 +1267,9 @@ def report_runtime(args,emit=True):
             'model_construction_seconds':getattr(args,'initial_construction_seconds',args.model_construction_seconds)+sum(args.construction_totals),
             'primary_optimization_seconds':args.primary_optimization_seconds,
             'launch_minimization_seconds':sum(r['runtime_seconds'] for r in runs if r['stage']=='Secondary: launch count'),
-            'fuel_minimization_seconds':sum(r['runtime_seconds'] for r in runs if r['stage']=='Secondary: fuel allocation'),
+            'fuel_minimization_seconds':sum(r['runtime_seconds'] for r in runs if r['stage'] in ['Secondary: fuel allocation','Secondary: fuel consumption']),
             'completion_optimization_seconds':sum(r['runtime_seconds'] for r in runs if r['stage']=='Secondary: mission completion time'),
-            'other_secondary_seconds':sum(r['runtime_seconds'] for r in runs if r['stage'].startswith('Secondary:') and r['stage'] not in ['Secondary: launch count','Secondary: fuel allocation','Secondary: mission completion time']),
+            'other_secondary_seconds':sum(r['runtime_seconds'] for r in runs if r['stage'].startswith('Secondary:') and r['stage'] not in ['Secondary: launch count','Secondary: fuel allocation','Secondary: fuel consumption','Secondary: mission completion time']),
             'optimization_elapsed_seconds':getattr(args,'optimization_elapsed_seconds',time.monotonic()-args.optimization_started),
             'total_elapsed_seconds':time.monotonic()-args.optimization_started,
             'any_solver_exceeded_requested_limit':any(r['exceeded_requested_limit'] for r in runs),
@@ -1214,6 +1296,8 @@ def main():
     p.add_argument('--inventory',type=Path,help='CSV of material_id,quantity starting whole-item counts')
     p.add_argument('--days',type=float,default=30)
     p.add_argument('--fuel',type=float,default=500)
+    p.add_argument('--fuel-mode',choices=['default','existing_inventory'],default='default',help='Default four-fuel allocation budget, or fixed five-fuel Virtue inventory with no replenishment')
+    p.add_argument('--initial-fuel',action='append',default=[],metavar='FUEL=QUANTITY',help='Repeatable fixed stock, e.g. curiosity=120T or humility=250B; plain numbers are eggs; omitted fuels are zero')
     p.add_argument('--fuel-step',type=float,default=5,help='Each fuel type is allocated in blocks of this many T')
     p.add_argument('--parallel',type=int,default=3)
     p.add_argument('--events',type=int,default=0,help='Number of hypothetical evenly spaced events in horizon')

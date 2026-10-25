@@ -8,6 +8,9 @@ let fixtures;
 test.beforeAll(() => {
   fixtures = fs.mkdtempSync(path.join(os.tmpdir(), 'mission-plan-browser-'));
   execFileSync('python3', ['tests/pwa/fixtures.py', fixtures], {cwd: path.resolve(__dirname, '../..')});
+  const root = path.resolve(__dirname, '../..');
+  const python = fs.existsSync(path.join(root, '.venv/bin/python')) ? path.join(root, '.venv/bin/python') : 'python3';
+  execFileSync(python, ['tests/pwa/fuel_inventory_fixture.py', fixtures], {cwd: root});
 });
 test.afterAll(() => fs.rmSync(fixtures, {recursive: true, force: true}));
 
@@ -30,6 +33,45 @@ async function closeCurrent(page) {
   await page.getByRole('button', {name: 'Close and delete', exact: true}).click();
   await expect(page.getByRole('heading', {name: 'Import Plan', exact: true})).toBeVisible();
 }
+
+test('actual fixed-fuel optimizer plan imports, reports inventory and retains progress offline', async ({page, context}) => {
+  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  await page.setViewportSize({width:390,height:844});
+  await open(page);
+  const dashboard = await importFile(page, 'fuel-inventory');
+  await expect(dashboard.locator('#fuelMode')).toHaveText('Fuel: existing inventory (no replenishment)');
+  await expect(dashboard.locator('#allocatedFuelTotal')).toHaveText('105.5T');
+  await expect(dashboard.locator('#fuelTotal')).toHaveText('Consumed: 105T · Remaining: 500B');
+  await expect(dashboard.locator('#fuelInventoryTable tbody tr')).toHaveCount(5);
+  const fuelScroll = dashboard.locator('#fuelPanel .tablewrap');
+  expect(await fuelScroll.evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true);
+  await fuelScroll.evaluate(element => { element.scrollLeft = element.scrollWidth; });
+  expect(await fuelScroll.evaluate(element => element.scrollLeft)).toBeGreaterThan(0);
+  expect(await dashboard.locator('body').evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  const curiosity = dashboard.locator('#fuelInventoryTable tbody tr').filter({hasText: 'Curiosity'});
+  await expect(curiosity).toContainText('45.5T'); await expect(curiosity).toContainText('45T');
+  await expect(curiosity).toContainText('500B');
+  const first = dashboard.locator('.mission-cell').first();
+  await expect(first.locator('.mission-name img')).toHaveAttribute('data-icon-file','afx_ship_henerprise.png');
+  await expect(first.locator('.mission-target img')).toHaveAttribute('data-icon-file','afx_tungsten_ankh_4.png');
+  await expect(first.locator('.mission-length-badge')).toHaveText('S');
+  await first.click(); await expect(page.locator('#saveStatus')).toHaveText('Saved on this device');
+  const times = await page.evaluate(async () => (await (await import('./store.mjs')).readActivePlan()).completionTimes);
+  const downloadPromise = page.waitForEvent('download');
+  await dashboard.getByRole('button', {name:'Export progress',exact:true}).click();
+  const backup = path.join(fixtures,'fixed-fuel-backup.json'); await (await downloadPromise).saveAs(backup);
+  await context.setOffline(true); await page.reload();
+  await expect(first).toHaveClass(/latest-completed/);
+  await expect(first.locator('.completion-time')).toHaveText('Just now');
+  await expect(dashboard.locator('#fuelInventoryTable')).toContainText('500B');
+  expect(await page.evaluate(async () => (await (await import('./store.mjs')).readActivePlan()).completionTimes)).toEqual(times);
+  await expect(page.locator('#planFile')).toBeDisabled();
+  await first.click(); await expect(page.locator('#saveStatus')).toHaveText('Saved on this device');
+  await dashboard.locator('#progressFile').setInputFiles(backup);
+  await expect(first).toHaveClass(/latest-completed/);
+  await expect(page.locator('#saveStatus')).toHaveText('Saved on this device');
+  expect(errors).toEqual([]);
+});
 
 test('local import, automatic check/uncheck saves, reload, and progress backup', async ({page}) => {
   const errors = [];

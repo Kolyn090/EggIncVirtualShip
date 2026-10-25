@@ -1,6 +1,6 @@
 // App assets only. Plans and checklist progress are a single IndexedDB record;
 // app-shell updates never replace, migrate, or delete that active plan.
-const CACHE = 'egginc-mission-shell-06306fed19edcff4';
+const CACHE = 'egginc-mission-shell-80ceeca29f695195';
 const ASSETS = [
   "./",
   "./app.css",

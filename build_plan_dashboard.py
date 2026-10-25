@@ -5,6 +5,7 @@ import csv
 import json
 from pathlib import Path
 from schedule_validation import validate_schedule
+from fuel_inventory import validate_fuel_export
 
 REQUIRED = ('launch_plan.csv', 'schedule.csv', 'craft_plan.csv', 'material_balance.csv', 'event_windows.csv')
 
@@ -52,6 +53,7 @@ def build(results: Path, output: Path):
         previous[slot]=float(row['end_hour'])
     metadata=results/'plan_metadata.json'
     data['metadata']=json.loads(metadata.read_text(encoding='utf-8')) if metadata.exists() else {'target':'metronome-4'}
+    validate_fuel_export(data)
     validate_schedule(data['schedule'],int(data['metadata'].get('max_launches_per_hour',0)),
                       data['metadata'].get('horizon_hours'),max_slots=data['metadata'].get('parallel'),
                       event_windows=[(float(w['start_hour']),float(w['end_hour']),str(w['event_bonus']).lower()=='true') for w in data['event_windows']],
@@ -86,8 +88,8 @@ TEMPLATE = r'''<!doctype html>
 .table-panel tbody td{background:var(--panel)}
 .gap-details{display:block;flex:0 0 150px;align-self:flex-start;max-height:240px;overflow:auto}.gap-details summary{cursor:pointer;padding:8px;min-height:70px}.gap-breakdown{text-align:left;max-height:170px;overflow:auto}.gap-breakdown ul{padding-left:16px}.gap-reason{display:block;padding:4px;border-left:3px solid #7091ab;margin:3px 0}.gap-reason.sleep{border-color:#b28dce;background:#2d2139}.gap-reason.no-launch{border-color:#e48d86;background:#3b2728}.gap-reason.event-wait{border-color:#e5b45d;background:#48371e}
 </style></head><body><main>
-<header class="head"><div><div class="eyebrow">Mission optimization / expected drops</div><h1 id="targetTitle">Crafting plan</h1><p>Understand launches, event bonuses, crafting, and remaining materials at a glance.</p></div><div><div class="tag" id="horizon"></div><div class="tag" id="launchLimit"></div><div class="tag" id="planStatus"></div><div class="tag" id="launchCountStatus"></div><div class="tag" id="activityLimits"></div><div class="tag" id="fuelStatus"></div><div class="tag" id="completionStatus"></div><div class="tag" id="completionDay"></div></div></header>
-<section class="stats"><div class="stat"><div class="k">Total achievable target items</div><strong id="craftTotal">—</strong><small id="inventorySummary"></small></div><div class="stat"><div class="k">Total launches</div><strong id="launchTotal">—</strong><small id="boostTotal"></small></div><div class="stat"><div class="k">Allocated fuel</div><strong id="allocatedFuelTotal">—</strong><small id="fuelTotal"></small></div><div class="stat"><div class="k">Mission slots</div><strong id="slotTotal">—</strong><small id="eventTotal"></small></div></section>
+<header class="head"><div><div class="eyebrow">Mission optimization / expected drops</div><h1 id="targetTitle">Crafting plan</h1><p>Understand launches, event bonuses, crafting, and remaining materials at a glance.</p></div><div><div class="tag" id="horizon"></div><div class="tag" id="launchLimit"></div><div class="tag" id="planStatus"></div><div class="tag" id="launchCountStatus"></div><div class="tag" id="activityLimits"></div><div class="tag" id="fuelMode"></div><div class="tag" id="fuelStatus"></div><div class="tag" id="completionStatus"></div><div class="tag" id="completionDay"></div></div></header>
+<section class="stats"><div class="stat"><div class="k">Total achievable target items</div><strong id="craftTotal">—</strong><small id="inventorySummary"></small></div><div class="stat"><div class="k">Total launches</div><strong id="launchTotal">—</strong><small id="boostTotal"></small></div><div class="stat"><div class="k" id="fuelTotalLabel">Allocated fuel</div><strong id="allocatedFuelTotal">—</strong><small id="fuelTotal"></small></div><div class="stat"><div class="k">Mission slots</div><strong id="slotTotal">—</strong><small id="eventTotal"></small></div></section>
 <section class="panel"><strong id="craftBounds"></strong><div id="searchRuntime" class="sub"></div></section>
 <div class="section"><div><h2>Recommended ships</h2><small>Grouped across all three slots and planning phases</small></div><div class="filters"><input id="search" placeholder="Filter ship names" aria-label="Filter ships"><select id="boostFilter" aria-label="Filter launches"><option value="all">All launches</option><option value="boost">Boosted only</option><option value="normal">Regular only</option></select></div></div>
 <div id="ships" class="shipgrid"></div><p class="note" id="zeroFuelNote"></p>
@@ -102,12 +104,14 @@ TEMPLATE = r'''<!doctype html>
 </main><script>
 const data=/*__DATA__*/;
 document.getElementById('launchLimit').textContent=data.metadata?.max_launches_per_hour ? `Launch limit: ${data.metadata.max_launches_per_hour} per slot per rolling hour` : 'Launch limit: unlimited';
+const stockFuelMode=data.metadata?.fuel_mode==='existing_inventory';
+document.getElementById('fuelMode').textContent=stockFuelMode?'Fuel: existing inventory (no replenishment)':'Fuel: default allocation';
 const optimization=data.metadata?.optimization;
 document.getElementById('planStatus').textContent=optimization ? (optimization.status===0?'Craft maximum proven':'Feasible plan; craft maximum unproven') : 'Legacy plan: proof status unavailable';
 const guarantees=optimization?.guarantees;
 document.getElementById('activityLimits').textContent=`Total launch cap: ${data.metadata?.max_total_launches||'unlimited'}; per planning day (all slots): ${data.metadata?.max_launches_per_day||'unlimited'}`;
 document.getElementById('launchCountStatus').textContent=guarantees?.launch_count?.proven?'Minimum launch count proven (fixed crafts)':'Minimum launch count unproven';
-document.getElementById('fuelStatus').textContent=guarantees?.allocated_fuel?.proven?'Minimum allocated fuel proven (fixed crafts/launches)':'Minimum fuel unproven';
+document.getElementById('fuelStatus').textContent=stockFuelMode?(guarantees?.consumed_fuel?.proven?'Minimum consumed fuel proven (fixed crafts/launches)':'Minimum consumed fuel unproven'):(guarantees?.allocated_fuel?.proven?'Minimum allocated fuel proven (fixed crafts/launches)':'Minimum fuel unproven');
 document.getElementById('completionStatus').textContent=guarantees?.completion?.proven?'Minimum completion proven (fixed crafts/launches/fuel)':'Minimum completion unproven';
 const targetId=data.metadata?.target||'metronome-4';
 const targetName=({'metronome-4':'Reggference Quantum Metronome','ankh-4':'Brilliant Tungsten Ankh'})[targetId]||targetId;
@@ -133,7 +137,7 @@ const windows=data.event_windows.filter(r=>String(r.event_bonus).toLowerCase()==
 const horizon=Math.max(24,...data.event_windows.map(r=>num(r.end_hour)),...sched.map(r=>r.end_hour));
 const slots=[...new Set(sched.map(r=>r.slot))].sort((a,b)=>a-b);
 const names=[...new Set(sched.map(r=>r.ship))].sort();
-const fuels=['curiousity','kindness','resilence','integrity'];
+const fuels=data.metadata?.fuel_types||['curiousity','kindness','resilence','integrity'];
 const fuelUse=Object.fromEntries(fuels.map(f=>[f,plans.reduce((a,r)=>a+num(r[f+'_T']),0)]));
 const totalFuel=Object.values(fuelUse).reduce((a,b)=>a+b,0);
 document.getElementById('horizon').textContent= `${fmt(horizon/24,2)} day horizon`;
@@ -143,13 +147,14 @@ document.getElementById('craftTotal').textContent=fmt(newlyCrafted+alreadyOwned,
 document.getElementById('inventorySummary').textContent=`${fmt(newlyCrafted,0)} newly crafted + ${fmt(alreadyOwned,0)} already owned (expected-drop model)`;
 document.getElementById('launchTotal').textContent=fmt(sched.length,0);
 document.getElementById('boostTotal').textContent=`${sched.filter(r=>r.event_bonus).length} event-boosted launches`;
-document.getElementById('fuelTotal').textContent='Consumed: '+fmt(totalFuel,3)+'T';
-document.getElementById('allocatedFuelTotal').textContent=data.summary?.allocated_fuel_T==null?'Unavailable':fmt(data.summary.allocated_fuel_T,3)+'T';
+document.getElementById('fuelTotal').textContent=stockFuelMode?'Consumed: '+(data.metadata.fuel_inventory_totals?.consumed||'Unavailable')+' · Remaining: '+(data.metadata.fuel_inventory_totals?.remaining||'Unavailable'):'Consumed: '+fmt(totalFuel,3)+'T';
+document.getElementById('fuelTotalLabel').textContent=stockFuelMode?'Starting fuel inventory':'Allocated fuel';
+document.getElementById('allocatedFuelTotal').textContent=stockFuelMode?(data.metadata.fuel_inventory_totals?.starting||'Unavailable'):(data.summary?.allocated_fuel_T==null?'Unavailable':fmt(data.summary.allocated_fuel_T,3)+'T');
 document.getElementById('completionDay').textContent='Actual completion: day '+fmt((data.summary?.completion_hour??Math.max(0,...sched.map(r=>r.end_hour)))/24,3);
 if(guarantees?.crafts && !guarantees.crafts.proven){document.getElementById('planStatus').textContent=`Best feasible new crafts: ${fmt(guarantees.crafts.value,0)}; bound: ${guarantees.crafts.bound??'unknown'}; gap: ${guarantees.crafts.gap==null?'unknown':fmt(guarantees.crafts.gap*100,2)+'%'}`}
 const freeShips=new Set(data.metadata?.zero_fuel_ships||[]);
 const freeLaunches=plans.filter(r=>freeShips.has(r.ship)).reduce((sum,r)=>sum+r.launches,0);
-document.getElementById('zeroFuelNote').textContent=freeLaunches?`${freeLaunches} launches use explicit zero fuel in mission.csv. Fuel-first optimization can require more launches.`:'';
+document.getElementById('zeroFuelNote').textContent=freeLaunches?(stockFuelMode?`${freeLaunches} launches have explicit zero costs on all five inventory fuel axes.`:`${freeLaunches} launches use none of the default four budgeted fuels; Humility is outside that budget.`):'';
 document.getElementById('slotTotal').textContent=slots.length;
 document.getElementById('eventTotal').textContent=windows.length+' capacity event'+(windows.length===1?'':'s');
 let filter='all',search='',slot='all';
@@ -203,7 +208,7 @@ function renderSchedule(){
  const rows=sched.filter(r=>(slot==='all'||r.slot===Number(slot))&&filtered(r));
  document.getElementById('scheduleRows').innerHTML=rows.length?rows.map(r=>{const k=missionKey(r),checked=completed.has(k);return `<tr><td>${day(r.start_hour)}</td><td>${day(r.end_hour)}</td><td>${r.slot}</td><td>${esc(r.ship)}</td><td>${esc(targetNameFor(r))}</td><td class="${r.event_bonus?'warn':''}">${r.event_bonus?'2× capacity':'Normal'}</td><td><button type="button" data-mission="${esc(k)}" class="${checked?'table-done':'table-undone'}" aria-pressed="${checked}">${checked?'✓ Done':'Mark done'}</button></td></tr>`}).join(''):'<tr><td colspan="7" class="empty">No matching launches.</td></tr>';
 }
-function renderFuel(){let max=Math.max(.001,...Object.values(fuelUse));document.getElementById('fuelPanel').innerHTML=fuels.map(f=>`<div class="fuelrow"><span>${f}</span><strong>${fmt(fuelUse[f],3)}T</strong></div><div class="progress"><div style="width:${100*fuelUse[f]/max}%"></div></div>`).join('')+`<div class="fuelrow"><span>Combined</span><strong>${fmt(totalFuel,3)}T</strong></div>`}
+function renderFuel(){if(stockFuelMode && Array.isArray(data.metadata.fuel_inventory)){document.getElementById('fuelPanel').innerHTML='<div class="tablewrap"><table id="fuelInventoryTable"><thead><tr><th>Fuel</th><th>Starting inventory</th><th>Consumed</th><th>Remaining</th><th>% used</th></tr></thead><tbody>'+data.metadata.fuel_inventory.map(r=>`<tr><td>${esc(r.fuel_name||r.fuel)}</td><td>${esc(r.starting)}</td><td>${esc(r.consumed)}</td><td>${esc(r.remaining)}</td><td>${r.percentage_consumed==null?'—':fmt(r.percentage_consumed,2)+'%'}</td></tr>`).join('')+'</tbody></table></div><p class="note">Remaining fuel is calculated after all planned launches. Checklist progress does not change these quantities.</p>';return;}let max=Math.max(.001,...Object.values(fuelUse));document.getElementById('fuelPanel').innerHTML=fuels.map(f=>`<div class="fuelrow"><span>${f}</span><strong>${fmt(fuelUse[f],3)}T</strong></div><div class="progress"><div style="width:${100*fuelUse[f]/max}%"></div></div>`).join('')+`<div class="fuelrow"><span>Combined</span><strong>${fmt(totalFuel,3)}T</strong></div>`}
 function renderCrafts(){document.getElementById('craftPanel').innerHTML=data.craft_plan.length?data.craft_plan.map(r=>`<div class="fuelrow"><span>${esc(r.material_id)}</span><strong class="${r.material_id===targetId?'good':''}">${fmt(r.crafts,0)}</strong></div>`).join(''):'<div class="empty">No crafts planned.</div>'}
 function renderMaterials(){const q=document.getElementById('materialSearch').value.toLowerCase().trim();let rows=data.material_balance.filter(r=>r.material_id.toLowerCase().includes(q));document.getElementById('materials').innerHTML=rows.map(r=>`<tr><td>${esc(r.material_id)}</td><td class="numeric">${fmt(num(r.starting_inventory),0)}</td><td class="numeric">${fmt(r.expected_drops,3)}</td><td class="numeric">${fmt(r.crafted,0)}</td><td class="numeric">${fmt(r.consumed,3)}</td><td class="numeric ${num(r.expected_remaining)<1?'warn':''}">${fmt(r.expected_remaining,3)}</td></tr>`).join('')||'<tr><td colspan="6" class="empty">No matching materials.</td></tr>'}
 function update(){renderShips();drawTimeline();renderSchedule();scrollToProgress()}

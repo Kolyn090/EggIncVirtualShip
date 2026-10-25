@@ -6,6 +6,10 @@ OPTIMIZATION_MODE="max-crafts" # balanced retains launch/fuel/completion priorit
 TARGET="metronome-4" # Any craftable material ID, e.g. ankh-4, metronome-4
 DAYS=30
 FUEL=500
+FUEL_MODE="default" # default: existing 5T allocation budget; existing_inventory: fixed Virtue stock
+# Fixed-inventory quantities are eggs (plain numbers), B or T; unlisted fuels are zero.
+# Example: INITIAL_FUEL=("curiosity=120T" "kindness=80T" "resilience=250B" "integrity=50T" "humility=100T")
+INITIAL_FUEL=()
 PARALLEL=3
 # Maximum launches PER SHIP SLOT within any rolling 60-minute window; 0 is unlimited
 MAX_LAUNCHES_PER_HOUR=2
@@ -39,18 +43,43 @@ fi
 # Find the effective target before choosing the default output directory.
 # Leave validation and missing-argument errors to argparse.
 EFFECTIVE_TARGET="$TARGET"
+EFFECTIVE_FUEL_MODE="$FUEL_MODE"
 OVERRIDES=("$@")
 for ((i=0; i<${#OVERRIDES[@]}; i++)); do
   case "${OVERRIDES[$i]}" in
     --target) if ((i+1<${#OVERRIDES[@]})); then EFFECTIVE_TARGET="${OVERRIDES[$((i+1))]}"; fi ;;
     --target=*) EFFECTIVE_TARGET="${OVERRIDES[$i]#--target=}" ;;
+    --fuel-mode) if ((i+1<${#OVERRIDES[@]})); then EFFECTIVE_FUEL_MODE="${OVERRIDES[$((i+1))]}"; fi ;;
+    --fuel-mode=*) EFFECTIVE_FUEL_MODE="${OVERRIDES[$i]#--fuel-mode=}" ;;
   esac
 done
-ARGS=(--mode "$OPTIMIZATION_MODE" --target "$TARGET" --days "$DAYS" --fuel "$FUEL" --parallel "$PARALLEL"
+ARGS=(--mode "$OPTIMIZATION_MODE" --target "$TARGET" --days "$DAYS" --fuel "$FUEL" --fuel-mode "$FUEL_MODE" --parallel "$PARALLEL"
       --events "$EVENTS" --event-hours "$EVENT_HOURS" --event-multiplier "$EVENT_MULTIPLIER"
       --max-launches-per-hour "$MAX_LAUNCHES_PER_HOUR" --max-total-launches "$MAX_TOTAL_LAUNCHES" --max-launches-per-day "$MAX_LAUNCHES_PER_DAY" --fuel-step "$FUEL_STEP" --output-dir "$OUTPUT_DIR/$EFFECTIVE_TARGET"
       --solver-seconds "$SOLVER_SECONDS" --polish-seconds "$POLISH_SECONDS")
 if [[ -n "$INVENTORY_FILE" ]]; then ARGS+=(--inventory "$INVENTORY_FILE"); fi
+# An explicit CLI quantity replaces that fuel's configured stock, never adds to
+# it. Keep validation/duplicate CLI errors in Python, including spelling aliases.
+fuel_key() {
+  local key="${1%%=*}"
+  key="$(printf '%s' "$key" | tr '[:upper:]' '[:lower:]')"
+  case "$key" in curiousity) key=curiosity ;; resilence) key=resilience ;; esac
+  printf '%s' "$key"
+}
+if [[ "$EFFECTIVE_FUEL_MODE" == existing_inventory ]]; then
+  for quantity in ${INITIAL_FUEL[@]+"${INITIAL_FUEL[@]}"}; do
+    REPLACED=false
+    for ((i=0; i<${#OVERRIDES[@]}; i++)); do
+      CLI_QUANTITY=""
+      case "${OVERRIDES[$i]}" in
+        --initial-fuel) if ((i+1<${#OVERRIDES[@]})); then CLI_QUANTITY="${OVERRIDES[$((i+1))]}"; fi ;;
+        --initial-fuel=*) CLI_QUANTITY="${OVERRIDES[$i]#--initial-fuel=}" ;;
+      esac
+      if [[ -n "$CLI_QUANTITY" && "$(fuel_key "$CLI_QUANTITY")" == "$(fuel_key "$quantity")" ]]; then REPLACED=true; fi
+    done
+    if [[ "$REPLACED" == false ]]; then ARGS+=(--initial-fuel "$quantity"); fi
+  done
+fi
 # Bash 3.2 with nounset requires the guarded expansion for empty arrays.
 for window in ${SLEEP_WINDOWS[@]+"${SLEEP_WINDOWS[@]}"}; do ARGS+=(--sleep "$window"); done
 for window in ${NO_LAUNCH_WINDOWS[@]+"${NO_LAUNCH_WINDOWS[@]}"}; do ARGS+=(--no-launch "$window"); done
