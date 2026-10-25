@@ -24,6 +24,44 @@ restart without the server or network. Plans remain private on the device:
 choosing an HTML file reads its embedded mission data locally, never uploads it,
 and does not execute its scripts or load its images/links.
 
+## GitHub Pages deployment
+
+The production URL is <https://kolyn090.github.io/EggIncVirtualShip/> once the
+first deployment succeeds. In the repository's **Settings → Pages**, select
+**GitHub Actions** under **Build and deployment → Source** (requires repository
+administration access). Then push a relevant change to `main`, or open
+**Actions → Deploy offline dashboard to GitHub Pages → Run workflow**, choosing
+`main`. Check the workflow's deployment job/environment link for the live URL.
+If configuration fails because Pages is not enabled, select that source first
+and rerun the workflow. Repository/organization policy must permit Pages and
+the `github-pages` deployment environment.
+
+The workflow in `.github/workflows/deploy-pwa.yml` runs on changes to `pwa/**`,
+the dashboard bundler/source template, or the workflow itself. It regenerates
+the trusted template and content-based service-worker cache version, then
+uploads **only the contents of `pwa/`** as the Pages website root. It does not
+publish repository files, results, inventory, or imported plans. Python runs
+only during the Actions build; production is entirely static HTTPS with no
+Node/Python server or API. Manual workflow dispatch is also available.
+
+Assets, manifest URLs and the service-worker registration use relative paths,
+so `/EggIncVirtualShip/` is the app root and service-worker scope. Keep the
+trailing slash in bookmarks. Wait for **Ready offline** on the first online
+visit before relying on offline reopening. Deployments refresh the app shell
+without deleting the active plan or checklist in IndexedDB. Localhost and
+GitHub Pages are different origins: existing local progress is not migrated;
+use the original HTML and an explicit progress backup when moving to Pages.
+
+To run the browser suite against the same repository subpath locally:
+
+```sh
+PWA_TEST_SUBPATH=1 npm run test:pwa
+```
+
+This stages the app at `/EggIncVirtualShip/` on a local static server and tests
+imports, autosave, full offline browser restart, confirmed closure, progress
+backups and installability there as well as at the default `/` test root.
+
 ## Workflow
 
 1. With no active plan, **Import Plan** is the only plan-entry screen. Choose an

@@ -1,0 +1,45 @@
+name: Deploy offline dashboard to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pwa/**'
+      - 'scripts/build_pwa_dashboard.py'
+      - 'build_plan_dashboard.py'
+      - '.github/workflows/deploy-pwa.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Refresh trusted dashboard bundle and offline cache version
+        run: python3 scripts/build_pwa_dashboard.py
+      - uses: actions/configure-pages@v5
+      - name: Upload static website root
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: pwa
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

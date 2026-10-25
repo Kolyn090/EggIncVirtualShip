@@ -12,7 +12,7 @@ test.beforeAll(() => {
 test.afterAll(() => fs.rmSync(fixtures, {recursive: true, force: true}));
 
 async function open(page) {
-  await page.goto('/');
+  await page.goto('./');
   await expect(page.getByRole('heading', {name: 'Import Plan', exact: true})).toBeVisible();
   await expect(page.locator('#offlineStatus')).toHaveText('Ready offline');
 }
@@ -98,7 +98,7 @@ test('imports blocked while active; cancelled close preserves data; confirmed cl
   expect(await page.evaluate(() => history.length)).toBe(historyLength);
 });
 
-test('whole-browser restart restores the plan/checklist offline, then closes/imports offline', async () => {
+test('whole-browser restart restores the plan/checklist offline, then closes/imports offline', async ({baseURL}) => {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'mission-plan-profile-'));
   const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ||
     (fs.existsSync('/usr/bin/chromium') ? '/usr/bin/chromium' : undefined);
@@ -106,7 +106,7 @@ test('whole-browser restart restores the plan/checklist offline, then closes/imp
   try {
     context = await chromium.launchPersistentContext(profile, {headless: true, executablePath});
     let page = context.pages()[0];
-    await page.goto('http://127.0.0.1:8765/');
+    await page.goto(baseURL);
     await expect(page.locator('#offlineStatus')).toHaveText('Ready offline');
     let dashboard = await importFile(page);
     await dashboard.locator('.mission-cell').first().click();
@@ -114,7 +114,7 @@ test('whole-browser restart restores the plan/checklist offline, then closes/imp
     await context.close();
     context = await chromium.launchPersistentContext(profile, {headless: true, executablePath, offline: true});
     page = context.pages()[0];
-    await page.goto('http://127.0.0.1:8765/');
+    await page.goto(baseURL);
     dashboard = page.frameLocator('#dashboard');
     await expect(dashboard.locator('.mission-cell.done')).toHaveCount(1);
     await dashboard.locator('.mission-cell').first().click();
@@ -185,7 +185,7 @@ test('mobile controls, mission cards, and failed saves remain usable', async ({p
   await expect(dashboard.locator('.mission-cell.done')).toHaveCount(1);
 });
 
-test('PWA manifest meets Chromium installability requirements', async () => {
+test('PWA manifest meets Chromium installability requirements', async ({baseURL}) => {
   // Installation is intentionally disabled in Playwright's incognito contexts.
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'mission-plan-install-'));
   const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ||
@@ -194,7 +194,7 @@ test('PWA manifest meets Chromium installability requirements', async () => {
   try {
     context = await chromium.launchPersistentContext(profile, {headless: true, executablePath});
     const page = context.pages()[0];
-    await page.goto('http://127.0.0.1:8765/');
+    await page.goto(baseURL);
     await expect(page.locator('#offlineStatus')).toHaveText('Ready offline');
     const session = await context.newCDPSession(page);
     const result = await session.send('Page.getInstallabilityErrors');
