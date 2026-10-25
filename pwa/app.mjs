@@ -23,7 +23,8 @@ function controls() {
 
 function sendProgress() {
   if (active && ready && !saving && !operations.length) {
-    frame.contentWindow.postMessage({type: 'restore-progress', id: active.id, token, progress: active.progress}, '*');
+    frame.contentWindow.postMessage({type: 'restore-progress', id: active.id, token, progress: active.progress,
+      completionTimes: active.completionTimes || {}}, '*');
   }
 }
 
@@ -87,7 +88,7 @@ async function flushProgress() {
   try {
     while (operations.length && active && !closing) {
       const operation = operations[0];
-      const record = await saveProgress(operation.id, operation.add, operation.remove);
+      const record = await saveProgress(operation.id, operation.add, operation.remove, operation.completionTimes);
       if (active?.id !== operation.id) return;
       active = record;
       operations.shift();
@@ -119,7 +120,7 @@ addEventListener('message', event => {
   } else if (data.type === 'progress') {
     const keys = new Set(active.keys);
     if (![data.add, data.remove].every(list => Array.isArray(list) && list.length <= keys.size && list.every(key => keys.has(key)))) return;
-    operations.push({id: active.id, add: data.add, remove: data.remove});
+    operations.push({id: active.id, add: data.add, remove: data.remove, completionTimes: data.completionTimes});
     void flushProgress();
   } else if (data.type === 'notice') message(String(data.message).slice(0, 1000));
 });

@@ -1,8 +1,8 @@
 // App assets only. Plans and checklist progress are a single IndexedDB record;
 // app-shell updates never replace, migrate, or delete that active plan.
-const CACHE = 'egginc-mission-shell-f61fabc52004e544';
+const CACHE = 'egginc-mission-shell-ffc6f4c4beaa0517';
 const ASSETS = ['./', './index.html', './app.css', './app.mjs', './plan.mjs', './store.mjs',
-  './frame.mjs', './dashboard-template.mjs', './manifest.webmanifest', './icon.svg'];
+  './frame.mjs', './checklist.mjs', './dashboard-template.mjs', './manifest.webmanifest', './icon.svg'];
 const urls = ASSETS.map(path => new URL(path, self.registration.scope).href);
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(urls.map(url => new Request(url, {cache: 'reload'}))))

@@ -87,6 +87,37 @@ The original HTML file and any downloaded JSON backups are external files;
 closing a plan does not delete those files. It deletes the app's active mission
 data and progress together. Keep the original HTML if you want to reimport it.
 
+## Completion highlights and compact checklist
+
+Completed missions stay green except for the most recently completed mission,
+which is yellow. Each completed card shows its completion time: **Just now**,
+**3 min ago**, **Today, 8:42 PM**, **Yesterday, 8:42 PM**, or a dated time for
+older entries. Exact times are available in the timestamp tooltip. Relative
+labels refresh every 15 seconds while open and when the dashboard regains
+focus. Dates and times use the device's local timezone.
+
+Check/uncheck updates save completion timestamps (milliseconds since the Unix
+epoch) alongside checklist progress in the same atomic IndexedDB record. A
+failed save/retry keeps the original click time. Completing another mission
+moves the yellow highlight; unchecking it falls back to the latest remaining
+completion. The highlight and timestamps survive offline browser restarts.
+
+Existing active plans and checkmarks remain intact without a database reset.
+Older completions have no recoverable timestamp and show **Completion time
+unavailable**. Until a timestamped completion exists, the last completed entry
+in the saved progress order is highlighted as a fallback; this does not infer
+an actual completion time. Once new completions are recorded, their timestamps
+determine the highlight. Equal timestamps use saved completion order to break
+ties. Unchecking removes that entry's timestamp; rechecking records a new one.
+
+At widths up to 650px, the checklist uses smaller padding, card widths and lane
+spacing while retaining ship, target, launch/finish times and status. The
+390px-wide test fixture's lane height drops from 208.5px to about 155px (about 35%
+more lanes in the same vertical space). Cards remain at least 108px tall and
+schedule-table check buttons retain 44px touch targets. Longer names or visible
+completion timestamps can increase card height. Desktop card dimensions and
+the checklist ordering are unchanged.
+
 ## Progress backups
 
 The dashboard's existing **Export progress** and **Import progress** buttons
@@ -96,6 +127,14 @@ with the same target and schedule. Another plan's backup is rejected; explicit
 backup import is the only way to restore a previous checklist after closing
 and reimporting a plan. No standalone dashboard's old browser progress is
 picked up automatically.
+
+New v1 backups include an optional `completionTimes` map keyed by mission key,
+so explicit backup restore also restores known completion times. Older backups
+without this field still work: known times for checks retained in the active
+plan are preserved; newly restored checks have unknown times rather than the
+time of the import. Invalid timestamp fields are rejected before progress is
+changed. Older standalone dashboards can read new backups' completion lists
+but ignore the optional timestamp field.
 
 The active record belongs to this browser profile/app origin. Normal browser
 restarts retain it. Clearing site data, private-session termination, or browser/
@@ -107,7 +146,7 @@ installation has not been tested; the mobile layout is tested in Chromium.
 ## Architecture
 
 - `store.mjs` keeps **one** IndexedDB key, `active`, containing mission data,
-  filename, unique active-session ID, progress and revision. There is no plan
+  filename, unique active-session ID, progress, completion timestamps and revision. There is no plan
   collection or history. Import uses a serialized read/write transaction and
   `add`, so simultaneous imports cannot overwrite each other. Closure deletes
   that single record atomically. Late updates/deletions must match its ID and
@@ -125,6 +164,10 @@ installation has not been tested; the mobile layout is tested in Chromium.
   synchronize views; notification storage contains no plan/progress. No progress
   is ever migrated to another plan. A closed frame's browsing context is
   discarded so iframe Back history cannot become a plan switcher.
+- `checklist.mjs` adds the PWA-only completion highlight, live timestamp labels,
+  timestamp-aware compatible backups and compact mobile styles around the
+  unchanged trusted template. The optimizer, source dashboard generator and
+  mission scheduling logic are untouched.
 - The service worker caches only app assets. An asset update does not delete or
   migrate the active record. All data is local; no imported files are requested
   by or posted to a server.
@@ -151,11 +194,16 @@ npx playwright install chromium
 PLAYWRIGHT_CHROMIUM_EXECUTABLE=/path/to/chromium npm run test:pwa
 ```
 
-Seven browser tests cover local import, auto-saving check and uncheck, normal
+Eleven browser tests cover local import, auto-saving check and uncheck, normal
 reload, a full persistent-profile browser restart while offline, offline close
 and reimport, blocked replacement, cancellation/confirmed deletion, stale
 writes, concurrent windows, explicit progress backups, untrusted HTML,
-mobile controls, storage-failure recovery and Chromium installability.
+mobile controls, storage-failure recovery and Chromium installability. Added
+coverage checks persistent timestamps and yellow highlights after an offline
+restart, live relative labels, uncheck fallback, legacy records/backups,
+timestamp backup round trips, cross-window timestamp-only updates, invalid
+dates, original click times after save retries, mobile density and unchanged
+desktop dimensions.
 Five Node tests cover parsing, malformed input, data preservation, backup-key
 compatibility and script escaping. A Python parity test ensures the offline
 bundle exactly matches the existing dashboard design and behavior.
@@ -163,7 +211,7 @@ bundle exactly matches the existing dashboard design and behavior.
 Verified commands for this implementation:
 
 - `npm run build:pwa`
-- `npm run test:pwa` — 7 real Chromium browser tests passed.
+- `npm run test:pwa` — 11 real Chromium browser tests passed.
 - `npm test` — 14 Node tests passed, including the existing source-data tests.
 - `.venv/bin/python -m unittest discover -s tests -v` — 66 tests passed.
 

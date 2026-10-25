@@ -50,6 +50,7 @@ test('local import, automatic check/uncheck saves, reload, and progress backup',
   const contents = JSON.parse(fs.readFileSync(backup, 'utf8'));
   expect(contents.format).toBe('reggference-progress-v1');
   expect(contents.completed).toHaveLength(1);
+  expect(contents.completionTimes[contents.completed[0]]).toBeGreaterThan(0);
   await dashboard.locator('.mission-cell').first().click();
   await expect(page.locator('#saveStatus')).toHaveText('Saved on this device');
   await page.reload();
@@ -59,6 +60,7 @@ test('local import, automatic check/uncheck saves, reload, and progress backup',
   await expect(page.locator('#saveStatus')).toHaveText('Saved on this device');
   await page.reload();
   await expect(dashboard.locator('.mission-cell').first()).toHaveAttribute('aria-pressed', 'true');
+  expect(await page.evaluate(async () => (await (await import('./store.mjs')).readActivePlan()).completionTimes)).toEqual(contents.completionTimes);
   expect(errors).toEqual([]);
 });
 
@@ -111,12 +113,16 @@ test('whole-browser restart restores the plan/checklist offline, then closes/imp
     let dashboard = await importFile(page);
     await dashboard.locator('.mission-cell').first().click();
     await expect(page.locator('#saveStatus')).toHaveText('Saved on this device');
+    const savedTimes = await page.evaluate(async () => (await (await import('./store.mjs')).readActivePlan()).completionTimes);
     await context.close();
     context = await chromium.launchPersistentContext(profile, {headless: true, executablePath, offline: true});
     page = context.pages()[0];
     await page.goto(baseURL);
     dashboard = page.frameLocator('#dashboard');
     await expect(dashboard.locator('.mission-cell.done')).toHaveCount(1);
+    await expect(dashboard.locator('.mission-cell.latest-completed')).toHaveCount(1);
+    await expect(dashboard.locator('.latest-completed .completion-time').first()).toHaveText('Just now');
+    expect(await page.evaluate(async () => (await (await import('./store.mjs')).readActivePlan()).completionTimes)).toEqual(savedTimes);
     await dashboard.locator('.mission-cell').first().click();
     await expect(page.locator('#saveStatus')).toHaveText('Saved on this device');
     await page.reload();
@@ -129,6 +135,94 @@ test('whole-browser restart restores the plan/checklist offline, then closes/imp
     await context?.close();
     fs.rmSync(profile, {recursive: true, force: true});
   }
+});
+
+test('latest completion changes, unchecking falls back, and relative times update without reload', async ({page}) => {
+  await page.clock.install({time: new Date('2026-10-25T12:00:00Z')});
+  await open(page);
+  const dashboard = await importFile(page);
+  const first = dashboard.locator('.mission-cell').nth(0), second = dashboard.locator('.mission-cell').nth(1);
+  const firstKey = await first.getAttribute('data-mission');
+  await first.click();
+  await expect(page.locator('#saveStatus')).toHaveText('Saved on this device');
+  await expect(first).toHaveClass(/latest-completed/);
+  await expect(first.locator('.completion-time')).toHaveText('Just now');
+  const firstTime = await page.evaluate(async key => (await (await import('./store.mjs')).readActivePlan()).completionTimes[key], firstKey);
+  expect(firstTime).toBeGreaterThanOrEqual(Date.parse('2026-10-25T12:00:00Z'));
+  await page.clock.fastForward('03:00');
+  await expect(first.locator('.completion-time')).toHaveText('3 min ago');
+  await second.click();
+  await expect(page.locator('#saveStatus')).toHaveText('Saved on this device');
+  await expect(second).toHaveClass(/latest-completed/);
+  await expect(first).not.toHaveClass(/latest-completed/);
+  expect(await first.evaluate(cell => getComputedStyle(cell).backgroundColor)).toBe('rgb(22, 70, 58)');
+  expect(await second.evaluate(cell => getComputedStyle(cell).backgroundColor)).toBe('rgb(244, 214, 107)');
+  await second.click();
+  await expect(page.locator('#saveStatus')).toHaveText('Saved on this device');
+  await expect(first).toHaveClass(/latest-completed/);
+  const record = await page.evaluate(async () => (await import('./store.mjs')).readActivePlan());
+  expect(record.completionTimes).toEqual({[firstKey]: firstTime});
+  await page.reload();
+  await expect(first).toHaveClass(/latest-completed/);
+  await expect(first.locator('.completion-time')).toHaveText('3 min ago');
+  await page.clock.fastForward(24 * 60 * 60 * 1000);
+  await expect(first.locator('.completion-time')).toContainText('Yesterday,');
+  await first.click();
+  await expect(page.locator('#saveStatus')).toHaveText('Saved on this device');
+  await expect(dashboard.locator('.mission-cell.latest-completed')).toHaveCount(0);
+  await page.clock.fastForward('01:00');
+  await first.click();
+  await expect(page.locator('#saveStatus')).toHaveText('Saved on this device');
+  expect(await page.evaluate(async key => (await (await import('./store.mjs')).readActivePlan()).completionTimes[key], firstKey)).toBeGreaterThan(firstTime);
+  await expect(first.locator('.completion-time')).toHaveText('Just now');
+});
+
+test('old saved records and old backups retain checks without inventing timestamps', async ({page}) => {
+  await open(page);
+  const dashboard = await importFile(page);
+  const record = await page.evaluate(async () => {
+    const store = await import('./store.mjs'), record = await store.readActivePlan();
+    // Simulate the exact record shape written by the previous PWA release.
+    await new Promise((resolve, reject) => {
+      const request = indexedDB.open('egginc-active-mission-plan', 1);
+      request.onsuccess = () => {
+        const db = request.result, tx = db.transaction('state', 'readwrite');
+        record.progress = record.keys.slice(0, 2); delete record.completionTimes;
+        tx.objectStore('state').put(record, 'active');
+        tx.oncomplete = () => { db.close(); resolve(); }; tx.onerror = () => reject(tx.error);
+      };
+    });
+    return record;
+  });
+  await page.reload();
+  await expect(dashboard.locator('.mission-cell.done')).toHaveCount(2);
+  await expect(dashboard.locator('.mission-cell.latest-completed')).toHaveCount(1);
+  await expect(dashboard.locator('.mission-cell.done .completion-time').first()).toHaveText('Completion time unavailable');
+  // A real new completion outranks unknown legacy times and upgrades in place.
+  const newKey = record.keys[2];
+  await dashboard.locator('.mission-cell').filter({has: dashboard.locator('.mission-flag', {hasText: 'Not done'})}).click();
+  await expect(page.locator('#saveStatus')).toHaveText('Saved on this device');
+  expect(await page.evaluate(async key => (await (await import('./store.mjs')).readActivePlan()).completionTimes[key], newKey)).toBeGreaterThan(0);
+  // Legacy backup can restore unknown-time entries, while retaining known times
+  // for checks already in the active record.
+  const backup = {format: 'reggference-progress-v1', plan: record.storageKey, completed: record.keys};
+  await dashboard.locator('#progressFile').setInputFiles({name: 'old.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(backup))});
+  await expect(page.locator('#message')).toHaveText('Progress imported.');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved on this device');
+  const current = await page.evaluate(async () => (await import('./store.mjs')).readActivePlan());
+  expect(current.progress).toHaveLength(3);
+  expect(Object.keys(current.completionTimes)).toEqual([newKey]);
+  await page.reload();
+  await expect(dashboard.locator('.mission-cell.done')).toHaveCount(3);
+  await expect(dashboard.locator('.mission-cell.latest-completed')).toHaveAttribute('data-mission', newKey);
+  // Restoring previously unchecked entries from a legacy backup marks them
+  // complete without assigning the time of the import as their completion.
+  await dashboard.locator('.mission-cell.latest-completed').click();
+  await expect(page.locator('#saveStatus')).toHaveText('Saved on this device');
+  await dashboard.locator('#progressFile').setInputFiles({name: 'old-again.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(backup))});
+  await expect(dashboard.locator('.mission-cell.done')).toHaveCount(3);
+  await expect(page.locator('#saveStatus')).toHaveText('Saved on this device');
+  expect(await page.evaluate(async () => (await (await import('./store.mjs')).readActivePlan()).completionTimes)).toEqual({});
 });
 
 test('two windows racing imports share one record; stale close cannot delete the next plan', async ({page, context}) => {
@@ -178,11 +272,66 @@ test('mobile controls, mission cards, and failed saves remain usable', async ({p
   await dashboard.locator('.mission-cell').first().click();
   await expect(page.locator('#saveStatus')).toHaveText('Checklist could not be saved');
   await expect(page.locator('#retrySave')).toBeVisible();
+  const actionTimes = await dashboard.locator('body').evaluate(() => window.__planBridge.completionTimes);
   await page.evaluate(() => { IDBDatabase.prototype.transaction = window.originalTransaction; });
   await page.locator('#retrySave').click();
   await expect(page.locator('#saveStatus')).toHaveText('Saved on this device');
   await page.reload();
   await expect(dashboard.locator('.mission-cell.done')).toHaveCount(1);
+  expect(await page.evaluate(async () => (await (await import('./store.mjs')).readActivePlan()).completionTimes)).toEqual(actionTimes);
+});
+
+test('mobile checklist is denser with readable information and desktop dimensions unchanged', async ({page}) => {
+  await page.setViewportSize({width: 390, height: 844});
+  await open(page);
+  const dashboard = await importFile(page);
+  async function dimensions() {
+    return dashboard.locator('.checklane').first().evaluate(lane => {
+      const style = document.getElementById('pwa-checklist-style');
+      const measure = () => ({height: lane.getBoundingClientRect().height,
+        width: lane.querySelector('.mission-cell').getBoundingClientRect().width,
+        cardHeight: lane.querySelector('.mission-cell').getBoundingClientRect().height});
+      const compact = measure(); style.sheet.disabled = true;
+      const original = measure(); style.sheet.disabled = false;
+      return {compact, original};
+    });
+  }
+  const mobile = await dimensions();
+  console.log('Mobile checklist dimensions:', JSON.stringify(mobile));
+  expect(mobile.original.height / mobile.compact.height).toBeGreaterThanOrEqual(1.3);
+  expect(mobile.compact.cardHeight).toBeGreaterThanOrEqual(44);
+  const first = dashboard.locator('.mission-cell').first();
+  for (const selector of ['.mission-name', '.mission-target', '.mission-time', '.mission-flag']) {
+    await expect(first.locator(selector)).toBeVisible();
+  }
+  await page.setViewportSize({width: 1280, height: 900});
+  const desktop = await dimensions();
+  expect(desktop.compact).toEqual(desktop.original);
+});
+
+test('timestamp-only backup updates synchronize across windows and invalid dates are rejected', async ({page, context}) => {
+  await open(page);
+  const dashboard = await importFile(page);
+  await dashboard.locator('.mission-cell').nth(0).click();
+  await expect(page.locator('#saveStatus')).toHaveText('Saved on this device');
+  await dashboard.locator('.mission-cell').nth(1).click();
+  await expect(page.locator('#saveStatus')).toHaveText('Saved on this device');
+  const record = await page.evaluate(async () => (await import('./store.mjs')).readActivePlan());
+  const other = await context.newPage(); await other.goto('./');
+  const otherDashboard = other.frameLocator('#dashboard');
+  await expect(otherDashboard.locator('.mission-cell.done')).toHaveCount(2);
+  const firstKey = await dashboard.locator('.mission-cell').nth(0).getAttribute('data-mission');
+  const backup = {format: 'reggference-progress-v1', plan: record.storageKey, completed: record.progress,
+    completionTimes: {...record.completionTimes, [firstKey]: Date.now() + 1000}};
+  await dashboard.locator('#progressFile').setInputFiles({name: 'times.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(backup))});
+  await expect(page.locator('#saveStatus')).toHaveText('Saved on this device');
+  await expect(dashboard.locator('.mission-cell.latest-completed')).toHaveAttribute('data-mission', firstKey);
+  await expect(otherDashboard.locator('.mission-cell.latest-completed')).toHaveAttribute('data-mission', firstKey);
+  const before = await page.evaluate(async () => (await import('./store.mjs')).readActivePlan());
+  backup.completionTimes[firstKey] = 'yesterday';
+  await dashboard.locator('#progressFile').setInputFiles({name: 'bad.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(backup))});
+  await expect(page.locator('#message')).toContainText('Invalid completion timestamps');
+  expect(await page.evaluate(async () => (await import('./store.mjs')).readActivePlan())).toEqual(before);
 });
 
 test('PWA manifest meets Chromium installability requirements', async ({baseURL}) => {

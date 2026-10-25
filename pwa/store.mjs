@@ -47,13 +47,13 @@ export function importPlan(data, name, identity) {
   return transaction('readwrite', (store, existing) => {
     if (existing) throw new PlanStateError('Close the current plan before importing another plan.');
     const record = {id: crypto.randomUUID(), name, data, storageKey: identity.storageKey,
-      keys: identity.keys, progress: [], revision: 0};
+      keys: identity.keys, progress: [], completionTimes: {}, revision: 0};
     store.add(record, ACTIVE); // atomic across windows; never overwrites a plan
     return record;
   });
 }
 
-export function saveProgress(id, add, remove) {
+export function saveProgress(id, add, remove, completionTimes) {
   return transaction('readwrite', (store, record) => {
     if (!record || record.id !== id) throw new PlanStateError('This plan is no longer active.');
     const keys = new Set(record.keys);
@@ -61,9 +61,22 @@ export function saveProgress(id, add, remove) {
       throw new Error('Invalid checklist update.');
     }
     const completed = new Set(record.progress);
+    const times = {...record.completionTimes};
+    if (completionTimes !== undefined && (!completionTimes || typeof completionTimes !== 'object' || Array.isArray(completionTimes) ||
+        Object.entries(completionTimes).some(([key, value]) => !keys.has(key) ||
+          (value !== null && (!Number.isFinite(value) || value <= 0 || value > 8640000000000000))))) {
+      throw new Error('Invalid completion timestamps.');
+    }
     for (const key of remove) completed.delete(key);
-    for (const key of add) completed.add(key);
+    for (const key of add) {
+      if (!completed.has(key)) times[key] = completionTimes === undefined ? Date.now() : completionTimes[key];
+      completed.add(key);
+    }
+    // Explicit backup imports can restore known timestamps for retained checks.
+    if (completionTimes) Object.assign(times, completionTimes);
     record.progress = [...completed];
+    record.completionTimes = Object.fromEntries(record.progress.filter(key => Number.isFinite(times[key]) && times[key] > 0)
+      .map(key => [key, times[key]]));
     record.revision++;
     store.put(record, ACTIVE);
     return record;
