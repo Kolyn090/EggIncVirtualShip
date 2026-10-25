@@ -47,10 +47,12 @@ budget and 5T increments. Supply stock with repeatable `--initial-fuel` values:
 .venv/bin/python optimize_reggference.py --fuel-mode existing_inventory \
   --initial-fuel curiosity=120T --initial-fuel kindness=80T \
   --initial-fuel resilience=250B --initial-fuel integrity=50T \
-  --initial-fuel humility=100T --target ankh-4 --days 26
+  --target ankh-4 --days 26
 ```
 
-All five Virtue types are checked, including actual Humility costs. Missing
+Only Curiosity, Kindness, Resilience and Integrity have finite inventory limits.
+Humility is always **Unlimited**, requires no stock entry and consumes no tank
+capacity. Its actual mission costs are reported separately. Missing finite
 types are zero. B/T quantities are exact; plain new stock values are eggs,
 while existing `--fuel 500` still means 500T. The runner adds `FUEL_MODE` and
 `INITIAL_FUEL` settings. Dashboards show starting, consumed and remaining fuel

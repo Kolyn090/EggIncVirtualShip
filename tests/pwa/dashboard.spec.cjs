@@ -39,9 +39,9 @@ test('actual fixed-fuel optimizer plan imports, reports inventory and retains pr
   await page.setViewportSize({width:390,height:844});
   await open(page);
   const dashboard = await importFile(page, 'fuel-inventory');
-  await expect(dashboard.locator('#fuelMode')).toHaveText('Fuel: existing inventory (no replenishment)');
-  await expect(dashboard.locator('#allocatedFuelTotal')).toHaveText('105.5T');
-  await expect(dashboard.locator('#fuelTotal')).toHaveText('Consumed: 105T · Remaining: 500B');
+  await expect(dashboard.locator('#fuelMode')).toHaveText('Fuel: existing inventory (Humility unlimited)');
+  await expect(dashboard.locator('#allocatedFuelTotal')).toHaveText('75.5T');
+  await expect(dashboard.locator('#fuelTotal')).toHaveText('Consumed: 75T · Remaining: 500B');
   await expect(dashboard.locator('#fuelInventoryTable tbody tr')).toHaveCount(5);
   const fuelScroll = dashboard.locator('#fuelPanel .tablewrap');
   expect(await fuelScroll.evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true);
@@ -51,6 +51,11 @@ test('actual fixed-fuel optimizer plan imports, reports inventory and retains pr
   const curiosity = dashboard.locator('#fuelInventoryTable tbody tr').filter({hasText: 'Curiosity'});
   await expect(curiosity).toContainText('45.5T'); await expect(curiosity).toContainText('45T');
   await expect(curiosity).toContainText('500B');
+  const humility = dashboard.locator('#fuelInventoryTable tbody tr').filter({hasText:'Humility'});
+  await expect(humility.locator('td').nth(1)).toHaveText('Unlimited');
+  await expect(humility.locator('td').nth(2)).toHaveText('30T');
+  await expect(humility.locator('td').nth(3)).toHaveText('Unlimited');
+  await expect(humility.locator('td').nth(4)).toHaveText('—');
   const first = dashboard.locator('.mission-cell').first();
   await expect(first.locator('.mission-name img')).toHaveAttribute('data-icon-file','afx_ship_henerprise.png');
   await expect(first.locator('.mission-target img')).toHaveAttribute('data-icon-file','afx_tungsten_ankh_4.png');
@@ -64,12 +69,31 @@ test('actual fixed-fuel optimizer plan imports, reports inventory and retains pr
   await expect(first).toHaveClass(/latest-completed/);
   await expect(first.locator('.completion-time')).toHaveText('Just now');
   await expect(dashboard.locator('#fuelInventoryTable')).toContainText('500B');
+  await expect(humility).toContainText('Unlimited');
   expect(await page.evaluate(async () => (await (await import('./store.mjs')).readActivePlan()).completionTimes)).toEqual(times);
   await expect(page.locator('#planFile')).toBeDisabled();
   await first.click(); await expect(page.locator('#saveStatus')).toHaveText('Saved on this device');
   await dashboard.locator('#progressFile').setInputFiles(backup);
   await expect(first).toHaveClass(/latest-completed/);
   await expect(page.locator('#saveStatus')).toHaveText('Saved on this device');
+  // Older saved HTML may contain obsolete finite Humility balances/totals.
+  // Present Unlimited and finite-only totals without changing mission data or
+  // transferring any checklist state to a newly imported plan.
+  const legacy = await page.evaluate(async () => (await (await import('./store.mjs')).readActivePlan()).data);
+  const oldHumility = legacy.metadata.fuel_inventory.find(row => row.fuel === 'humility');
+  Object.assign(oldHumility,{unlimited:false,starting:'30T',remaining:'0',starting_eggs:'30000000000000',remaining_eggs:'0',
+    starting_T:'30',allocated_T:'30',unused_T:'0',remaining_T:'0',percentage_consumed:100});
+  legacy.metadata.fuel_inventory_totals={starting:'105.5T',consumed:'105T',remaining:'500B'};
+  delete legacy.metadata.unlimited_fuels;
+  await closeCurrent(page);
+  await page.locator('#planFile').setInputFiles({name:'legacy-fuel.html',mimeType:'text/html',
+    buffer:Buffer.from('<script>const data='+JSON.stringify(legacy)+';</script>')});
+  await expect(dashboard.locator('#allocatedFuelTotal')).toHaveText('75.5T');
+  await expect(dashboard.locator('#fuelTotal')).toHaveText('Consumed: 75T · Remaining: 500B');
+  await expect(dashboard.locator('#fuelInventoryTable tbody tr').filter({hasText:'Humility'}).locator('td').nth(1)).toHaveText('Unlimited');
+  await expect(dashboard.locator('#planStatus')).toHaveText('Legacy fuel assumptions: rerun optimizer');
+  await expect(dashboard.locator('#craftBounds')).toContainText('rerun optimization with unlimited Humility');
+  await expect(dashboard.locator('.mission-cell.done')).toHaveCount(0);
   expect(errors).toEqual([]);
 });
 

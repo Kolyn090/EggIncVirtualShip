@@ -1,4 +1,4 @@
-"""Exact fixed Virtue fuel inventory, alongside the legacy four-fuel budget."""
+"""Exact finite Virtue inventory and unlimited Humility; legacy budget unchanged."""
 from decimal import Decimal, DecimalException, InvalidOperation, localcontext
 from fractions import Fraction
 from functools import reduce
@@ -34,7 +34,7 @@ def parse_fuel_quantity(value):
 
 
 def parse_initial_fuel(entries):
-    stock = dict.fromkeys(INVENTORY_FUELS, Fraction(0))
+    stock = dict.fromkeys(LEGACY_FUELS, Fraction(0))
     seen = set()
     entries = entries.items() if isinstance(entries, dict) else (str(entry).partition('=')[::2] for entry in (entries or []))
     for key, value in entries:
@@ -43,7 +43,9 @@ def parse_initial_fuel(entries):
             raise ValueError(f'Unknown fuel type {key!r}; supported Virtue fuels: Curiosity, Kindness, Resilience, Integrity, Humility')
         if name in seen:
             raise ValueError(f'Duplicate starting fuel entry for {FUEL_NAMES[name]}')
-        stock[name] = Fraction(parse_fuel_quantity(value)); seen.add(name)
+        quantity = Fraction(parse_fuel_quantity(value)); seen.add(name)
+        # Accept old commands without turning Humility into a finite resource.
+        if name != 'humility':stock[name] = quantity
     return stock
 
 
@@ -85,7 +87,22 @@ def validate_fuel_export(data):
             raise ValueError('Missing or duplicate fuel types')
         total_start=Fraction(0);total_used=Fraction(0)
         for name,row in rows.items():
-            start=Fraction(row['starting_eggs']);used=sum((Fraction(r[name+'_T'])*TRILLION for r in data['launch_plan']),Fraction(0))
+            used=sum((Fraction(r[name+'_T'])*TRILLION for r in data['launch_plan']),Fraction(0))
+            if used<0:raise ValueError('Fuel consumption cannot be negative')
+            if name=='humility' and 'humility' in metadata.get('unlimited_fuels',[]) and not row.get('unlimited'):
+                raise ValueError('Humility must not have a finite inventory')
+            if name=='humility' and row.get('unlimited'):
+                if Fraction(row['consumed_eggs'])!=used or Fraction(allocation[name]['used_T'])*TRILLION!=used or row['consumed']!=readable_fuel(used):
+                    raise ValueError('Unlimited Humility consumption disagrees with launch costs')
+                if row['starting']!='Unlimited' or row['remaining']!='Unlimited' or row['percentage_consumed'] is not None:
+                    raise ValueError('Humility must be reported as Unlimited')
+                for key in ['starting_eggs','remaining_eggs','allocated_T','starting_T','unused_T','remaining_T']:
+                    if row[key] is not None:raise ValueError('Humility cannot have a finite tank balance')
+                for key in ['allocated_T','starting_T','unused_T','remaining_T']:
+                    if allocation[name][key] not in ['',None]:raise ValueError('Humility cannot have finite CSV tank capacity')
+                continue
+            # Older archived exports with finite Humility remain readable.
+            start=Fraction(row['starting_eggs'])
             remaining=start-used;csv=allocation[name]
             if start<0 or used<0 or remaining<0 or Fraction(row['consumed_eggs'])!=used or Fraction(row['remaining_eggs'])!=remaining:
                 raise ValueError('Fuel balance disagrees with launch costs')
@@ -116,13 +133,13 @@ class FuelInventory:
                     raise ValueError(f'Existing inventory mode requires explicit finite nonnegative {name} fuel cost for {ship}; missing fuel is not zero') from exc
             self.costs.append(row)
         self.rows = []
-        totals = [sum(row) for row in self.costs]
+        totals = [sum(row[:len(LEGACY_FUELS)]) for row in self.costs]
         scale = lcm(*(value.denominator for value in totals))
         self.total_unit = Fraction(reduce(gcd, (int(value*scale) for value in totals), 0) or 1, scale)
         self.effort_costs = [int(value/self.total_unit) for value in totals]
         if max(self.effort_costs) > 2**50:
             raise ValueError('Total fuel cost scaling exceeds exact MILP integer range')
-        for k, name in enumerate(INVENTORY_FUELS):
+        for k, name in enumerate(LEGACY_FUELS):
             costs = [row[k] for row in self.costs]
             scale = lcm(*(value.denominator for value in costs))
             divisor = reduce(gcd, (int(value * scale) for value in costs), 0)
@@ -143,7 +160,7 @@ class FuelInventory:
         used = [Fraction(0) for _ in INVENTORY_FUELS]
         for row in schedule:
             for k, value in enumerate(self.costs[indices[row[2]]]): used[k] += value
-        for name, value in zip(INVENTORY_FUELS, used):
+        for name, value in zip(LEGACY_FUELS, used):
             if value > self.stock[name]:
                 raise ValueError(f'Independent exact fuel validation failed: {FUEL_NAMES[name]} consumed {readable_fuel(value)} exceeds inventory {readable_fuel(self.stock[name])}')
         return used
@@ -151,8 +168,14 @@ class FuelInventory:
     def summary(self, schedule):
         rows = []
         for name, used in zip(INVENTORY_FUELS, self.used(schedule)):
+            if name=='humility':
+                rows.append(dict(fuel=name, fuel_name=FUEL_NAMES[name], unlimited=True, starting_T=None,
+                    used_T=decimal_value(used/TRILLION), allocated_T=None, unused_T=None, remaining_T=None,
+                    percentage_consumed=None, starting_eggs=None, consumed_eggs=exact_text(used), remaining_eggs=None,
+                    starting='Unlimited', consumed=readable_fuel(used), remaining='Unlimited'))
+                continue
             start = self.stock[name]; remaining = start - used
-            rows.append(dict(fuel=name, fuel_name=FUEL_NAMES[name], starting_T=decimal_value(start/TRILLION),
+            rows.append(dict(fuel=name, fuel_name=FUEL_NAMES[name], unlimited=False, starting_T=decimal_value(start/TRILLION),
                 used_T=decimal_value(used/TRILLION), allocated_T=decimal_value(start/TRILLION), unused_T=decimal_value(remaining/TRILLION),
                 remaining_T=decimal_value(remaining/TRILLION), percentage_consumed=float(used/start*100) if start else None,
                 starting_eggs=exact_text(start), consumed_eggs=exact_text(used), remaining_eggs=exact_text(remaining),
@@ -160,11 +183,11 @@ class FuelInventory:
         return rows
 
     def totals(self, schedule):
-        start = sum(self.stock.values()); used = sum(self.used(schedule))
+        start = sum(self.stock.values()); used = sum(self.used(schedule)[:len(LEGACY_FUELS)])
         return dict(starting=readable_fuel(start), consumed=readable_fuel(used), remaining=readable_fuel(start-used))
 
     def physical_stages(self, stages):
-        """Minimize in exact integer fuel units; present stage values in T."""
+        """Minimize in exact finite-fuel units; present stage values in T."""
         converted=[]
         for original in stages:
             row=dict(original)

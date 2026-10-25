@@ -7,8 +7,9 @@ TARGET="metronome-4" # Any craftable material ID, e.g. ankh-4, metronome-4
 DAYS=30
 FUEL=500
 FUEL_MODE="default" # default: existing 5T allocation budget; existing_inventory: fixed Virtue stock
-# Fixed-inventory quantities are eggs (plain numbers), B or T; unlisted fuels are zero.
-# Example: INITIAL_FUEL=("curiosity=120T" "kindness=80T" "resilience=250B" "integrity=50T" "humility=100T")
+# Fixed-inventory quantities are eggs (plain numbers), B or T; unlisted finite fuels are zero.
+# Humility is always unlimited and needs no inventory entry.
+# Example: INITIAL_FUEL=("curiosity=120T" "kindness=80T" "resilience=250B" "integrity=50T")
 INITIAL_FUEL=()
 PARALLEL=3
 # Maximum launches PER SHIP SLOT within any rolling 60-minute window; 0 is unlimited

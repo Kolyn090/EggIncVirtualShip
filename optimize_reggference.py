@@ -725,7 +725,7 @@ def solve(args):
     ns=len(available);np_=len(phases);slots=args.parallel
     hours=np.array([duration_hours(mission.loc[s,'duration']) for s in available]);
     if fixed_fuel(args):args.fixed_inventory=FuelInventory(initial_fuel,mission,available)
-    print('[Fuel mode] '+('Existing inventory: fixed five-fuel stock; no replenishment or 5T allocation rounding' if fixed_fuel(args) else 'Default: four-fuel allocation budget'),flush=True)
+    print('[Fuel mode] '+('Existing inventory: fixed four-fuel stock; Humility unlimited; no replenishment or 5T allocation rounding' if fixed_fuel(args) else 'Default: four-fuel allocation budget'),flush=True)
     try:fuel=np.array([[float(mission.loc[s,f]) for f in names] for s in available])
     except (KeyError,TypeError,ValueError) as exc:raise ValueError('Mission fuel columns require explicit numeric values; missing fuel is not zero') from exc
     if not np.isfinite(fuel).all() or (fuel<0).any():
@@ -1203,7 +1203,7 @@ def solve(args):
     fuel_summary=args.fixed_inventory.summary(schedule) if fixed_fuel(args) else None
     if fixed_fuel(args):
         fuel_allocation=pd.DataFrame(fuel_summary)
-        print('Fuel inventory (fixed, no replenishment; exact validation, zero overspend tolerance):')
+        print('Fuel inventory (four finite fuels; Humility Unlimited; exact validation, zero overspend tolerance):')
         print(fuel_allocation[['fuel_name','starting','consumed','remaining','percentage_consumed']].fillna('—').to_string(index=False))
     else:
         print(f'Fuel used: {plan.total_fuel_T.sum() if len(plan) else 0:.3f} / {args.fuel:g} T')
@@ -1211,7 +1211,7 @@ def solve(args):
             for slot in range(slots) for p in range(np_) for j in range(ns)),
             'allocated_T':int(x[block(k)])*args.fuel_step} for k,kind in enumerate(names)])
         fuel_allocation['unused_T']=fuel_allocation.allocated_T-fuel_allocation.used_T
-    if (fuel_allocation.unused_T < -1e-5).any():raise RuntimeError('Fuel allocation inconsistent')
+    if (fuel_allocation.unused_T.dropna() < -1e-5).any():raise RuntimeError('Fuel allocation inconsistent')
     checked_material,checked_fuel=validate_resources(schedule,craft_counts,groups,outputs,inventory,rate,args.event_multiplier,
         available,fuel,fuel_allocation.allocated_T.to_numpy(),args.fuel_step,args.fuel,args.fixed_inventory)
     if any(abs(row.expected_remaining-checked_material[row.material_id])>1e-6 for row in balance_df.itertuples()):
@@ -1226,11 +1226,13 @@ def solve(args):
     if sleeps:
         print(f'Launch blackouts: {len(sleeps)} window(s)')
     completion=float(schedule_df.end_hour.max()) if len(schedule_df) else 0.
-    guarantees=objective_guarantees(result,int(x[ridcol[goal_rid]]),float((fuel_allocation.used_T if fixed_fuel(args) else fuel_allocation.allocated_T).sum()),completion,len(schedule_df),fuel_stage='fuel consumption' if fixed_fuel(args) else 'fuel allocation')
+    budgeted=fuel_allocation[fuel_allocation.fuel!='humility'] if fixed_fuel(args) else fuel_allocation
+    guarantees=objective_guarantees(result,int(x[ridcol[goal_rid]]),float((budgeted.used_T if fixed_fuel(args) else budgeted.allocated_T).sum()),completion,len(schedule_df),fuel_stage='fuel consumption' if fixed_fuel(args) else 'fuel allocation')
     if fixed_fuel(args):
         guarantees['consumed_fuel']=guarantees['allocated_fuel']
-        guarantees['allocated_fuel']={'proven':True,'value':float(fuel_allocation.allocated_T.sum()),'scope':'fixed starting inventory; not an optimization decision'}
-    fuel_title='consumed fuel' if fixed_fuel(args) else 'allocated fuel'
+        guarantees['consumed_fuel']['fuel_types']=list(FUELS)
+        guarantees['allocated_fuel']={'proven':True,'value':float(budgeted.allocated_T.sum()),'scope':'fixed finite starting inventory; Humility unlimited; not an optimization decision'}
+    fuel_title='consumed finite fuel' if fixed_fuel(args) else 'allocated fuel'
     fuel_proof=guarantees['consumed_fuel' if fixed_fuel(args) else 'allocated_fuel']['proven']
     print(f'[Summary] Completion day {completion/24:.4f}; {fuel_title} proven: {fuel_proof}; completion proven: {guarantees["completion"]["proven"]}',flush=True)
     schedule_df['target']=schedule_df.ship.map(lambda key:mission.loc[key,'drop_target'])
@@ -1239,7 +1241,7 @@ def solve(args):
     plan['ship']=plan.ship.map(lambda key:mission.loc[key,'base_ship'])
     if args.output_dir:
         out=Path(args.output_dir);out.mkdir(parents=True,exist_ok=True)
-        (out/'plan_metadata.json').write_text(json.dumps({'target':target,'fuel_mode':args.fuel_mode,'fuel_types':list(names),'fuel_inventory':fuel_summary,'fuel_inventory_totals':args.fixed_inventory.totals(schedule) if fixed_fuel(args) else None,'fuel_validation_tolerance_eggs':0 if fixed_fuel(args) else None,'missing_drop_materials':missing_rates,'unknown_drop_materials':unknown_rates,'max_total_launches':getattr(args,'max_total_launches',0),'max_launches_per_day':getattr(args,'max_launches_per_day',0),'max_launches_per_hour':launch_limit,'launch_rate_scope':'per-slot','parallel':slots,'horizon_hours':H,'zero_fuel_ships':zero_fuel_ships,'drop_profile_source':profile_info,'targeting_profile_names':profile_info['target_names'],'optimization':{'mode':args.mode,'craft_search':getattr(result,'craft_search',[]),'status':int(result.status),'message':result.message,'gap':finite_or_none(getattr(result,'mip_gap',None)),'solver_runs':args.solver_runs,'upper_bound_crafts':getattr(result,'upper_bound_crafts',None),'secondary_stages':getattr(result,'secondary_stages',[]),'guarantees':guarantees,'removed_surplus_missions':removed_missions}},indent=2,default=str)+'\n',encoding='utf-8')
+        (out/'plan_metadata.json').write_text(json.dumps({'target':target,'fuel_mode':args.fuel_mode,'fuel_types':list(names),'unlimited_fuels':['humility'] if fixed_fuel(args) else [],'fuel_inventory':fuel_summary,'fuel_inventory_totals':args.fixed_inventory.totals(schedule) if fixed_fuel(args) else None,'fuel_validation_tolerance_eggs':0 if fixed_fuel(args) else None,'missing_drop_materials':missing_rates,'unknown_drop_materials':unknown_rates,'max_total_launches':getattr(args,'max_total_launches',0),'max_launches_per_day':getattr(args,'max_launches_per_day',0),'max_launches_per_hour':launch_limit,'launch_rate_scope':'per-slot','parallel':slots,'horizon_hours':H,'zero_fuel_ships':zero_fuel_ships,'drop_profile_source':profile_info,'targeting_profile_names':profile_info['target_names'],'optimization':{'mode':args.mode,'craft_search':getattr(result,'craft_search',[]),'status':int(result.status),'message':result.message,'gap':finite_or_none(getattr(result,'mip_gap',None)),'solver_runs':args.solver_runs,'upper_bound_crafts':getattr(result,'upper_bound_crafts',None),'secondary_stages':getattr(result,'secondary_stages',[]),'guarantees':guarantees,'removed_surplus_missions':removed_missions}},indent=2,default=str)+'\n',encoding='utf-8')
         plan.to_csv(out/'launch_plan.csv',index=False)
         fuel_allocation.to_csv(out/'fuel_allocation.csv',index=False)
         schedule_df.to_csv(out/'schedule.csv',index=False)
@@ -1296,8 +1298,8 @@ def main():
     p.add_argument('--inventory',type=Path,help='CSV of material_id,quantity starting whole-item counts')
     p.add_argument('--days',type=float,default=30)
     p.add_argument('--fuel',type=float,default=500)
-    p.add_argument('--fuel-mode',choices=['default','existing_inventory'],default='default',help='Default four-fuel allocation budget, or fixed five-fuel Virtue inventory with no replenishment')
-    p.add_argument('--initial-fuel',action='append',default=[],metavar='FUEL=QUANTITY',help='Repeatable fixed stock, e.g. curiosity=120T or humility=250B; plain numbers are eggs; omitted fuels are zero')
+    p.add_argument('--fuel-mode',choices=['default','existing_inventory'],default='default',help='Default four-fuel allocation budget, or fixed Virtue inventory for four finite fuels; Humility is always unlimited')
+    p.add_argument('--initial-fuel',action='append',default=[],metavar='FUEL=QUANTITY',help='Repeatable finite stock, e.g. curiosity=120T; plain numbers are eggs; omitted finite fuels are zero; legacy Humility amounts are accepted but ignored')
     p.add_argument('--fuel-step',type=float,default=5,help='Each fuel type is allocated in blocks of this many T')
     p.add_argument('--parallel',type=int,default=3)
     p.add_argument('--events',type=int,default=0,help='Number of hypothetical evenly spaced events in horizon')

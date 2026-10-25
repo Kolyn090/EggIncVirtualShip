@@ -174,8 +174,10 @@ and generated files together. Production still serves only static `pwa/` assets.
 ## Plans using stored fuel
 
 The optimizer's optional `--fuel-mode existing_inventory` exports fixed Virtue
-fuel stock, planned consumption and remaining fuel for all five types. The PWA
-shows this information in B/T notation with the same launch checklist. These
+stock, planned consumption and remaining fuel for the four finite types.
+Humility is always **Unlimited** and occupies no finite tank capacity; its
+actual mission usage is shown separately. The PWA displays the finite totals
+in B/T notation with the same launch checklist. These
 are totals after all planned launches; checkmarks do not alter fuel inventory.
 Older plans without fuel-mode fields retain the default four-fuel display.
 See [fuel modes, input formats and complete examples](FUEL_INVENTORY.md).
@@ -294,7 +296,7 @@ Verified commands for this implementation:
 - `npm run test:pwa` — 15 real Chromium browser tests passed.
 - `PWA_TEST_SUBPATH=1 npm run test:pwa` — same 15 tests at `/EggIncVirtualShip/`.
 - `npm test` — 17 Node tests passed, including the existing source-data tests.
-- `.venv/bin/python -m unittest discover -s tests -v` — 84 tests passed.
+- `.venv/bin/python -m unittest discover -s tests -v` — 86 tests passed.
 
 A real 360-mission HTML export was also imported on a 390×844 viewport. Its
 stored mission data matched the source exactly; check/save/reload and timeline

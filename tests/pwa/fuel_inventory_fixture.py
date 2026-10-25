@@ -19,7 +19,7 @@ def main():
     output=base/'results'
     args=Namespace(data_dir=str(base),expectations='ship_material_expectations.csv',ships=None,inventory=None,
                    target='ankh-4',days=1,parallel=3,events=0,event_hours=1,event_multiplier=2,sleep=[],no_launch=[],
-                   fuel=0,fuel_step=5,fuel_mode='existing_inventory',initial_fuel=['curiosity=45.5T','kindness=30T','humility=30T'],
+                   fuel=0,fuel_step=5,fuel_mode='existing_inventory',initial_fuel=['curiosity=45.5T','kindness=30T'],
                    mode='balanced',max_launches_per_hour=1,max_total_launches=3,max_launches_per_day=0,
                    solver_seconds=6,polish_seconds=1,output_dir=str(output))
     with contextlib.redirect_stdout(io.StringIO()):solve(args)

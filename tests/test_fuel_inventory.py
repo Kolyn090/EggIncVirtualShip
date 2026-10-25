@@ -43,7 +43,7 @@ class FuelQuantityTests(unittest.TestCase):
         stock=parse_initial_fuel(['Curiosity=1T', 'resilience=500B'])
         self.assertEqual(stock['curiousity'], 10**12)
         self.assertEqual(stock['resilence'], 500*10**9)
-        self.assertEqual(stock['humility'], 0)
+        self.assertNotIn('humility', stock)
 
 
 class FixedFuelTests(unittest.TestCase):
@@ -73,10 +73,17 @@ class FixedFuelTests(unittest.TestCase):
             for row in meta['fuel_inventory']:
                 used=sum((Fraction(costs.loc[s,row['fuel']])*10**12 for s in schedule.ship),Fraction(0))
                 self.assertEqual(used,Fraction(row['consumed_eggs']))
-                self.assertEqual(Fraction(row['starting_eggs'])-used,Fraction(row['remaining_eggs']))
-                self.assertGreaterEqual(Fraction(row['remaining_eggs']),0)
                 exported=allocation.set_index('fuel').loc[row['fuel']]
                 self.assertEqual(Fraction(exported.used_T)*10**12,used)
+                if row['fuel']=='humility':
+                    self.assertTrue(row['unlimited'])
+                    self.assertIsNone(row['starting_eggs']);self.assertIsNone(row['remaining_eggs'])
+                    self.assertEqual(row['starting'],'Unlimited');self.assertEqual(row['remaining'],'Unlimited')
+                    self.assertIsNone(row['percentage_consumed'])
+                    self.assertTrue(pd.isna(exported.allocated_T));self.assertTrue(pd.isna(exported.unused_T))
+                    continue
+                self.assertEqual(Fraction(row['starting_eggs'])-used,Fraction(row['remaining_eggs']))
+                self.assertGreaterEqual(Fraction(row['remaining_eggs']),0)
                 self.assertEqual(Fraction(exported.allocated_T)*10**12,Fraction(row['starting_eggs']))
                 self.assertEqual(Fraction(exported.unused_T)*10**12,Fraction(row['remaining_eggs']))
             self.assertEqual(meta['fuel_validation_tolerance_eggs'],0)
@@ -91,7 +98,7 @@ class FixedFuelTests(unittest.TestCase):
                     crafts=pd.read_csv(out/'craft_plan.csv'))
 
     def test_zero_and_insufficient_inventory(self):
-        for stock in [[], ['curiosity=100T','kindness=100T'], ['curiosity=99B','kindness=1T','humility=1T']]:
+        for stock in [[], ['curiosity=100T'], ['curiosity=99B','kindness=1T']]:
             result=self.run_plan(stock)
             self.assertTrue(result['schedule'].empty)
             self.assertTrue(result['crafts'].empty)
@@ -103,7 +110,7 @@ class FixedFuelTests(unittest.TestCase):
             self.assertEqual(len(result['schedule']),count)
         exact=self.run_plan(['curiosity=0.3T','kindness=600B','humility=150000000'])
         self.assertEqual(len(exact['schedule']),3)
-        self.assertEqual(set(exact['fuel'].remaining_eggs),{'0'})
+        self.assertEqual(set(exact['fuel'].loc[exact['fuel'].fuel!='humility','remaining_eggs']),{'0'})
 
     def test_mixed_decimal_notation_and_unused_fuel_no_allocation_rounding(self):
         result=self.run_plan(['curiosity=1.5T','kindness=250.5b','humility=100000000'],fuel_step=999)
@@ -112,7 +119,7 @@ class FixedFuelTests(unittest.TestCase):
         self.assertEqual(rows['kindness']['remaining'],'50.5B')
         self.assertEqual(rows['curiousity']['remaining'],'1.4T')
         self.assertIn('50.5B',result['log'])
-        self.assertEqual(Decimal(result['fuel'].set_index('fuel').loc['humility','allocated_T']),Decimal('0.0001'))
+        self.assertTrue(pd.isna(result['fuel'].set_index('fuel').loc['humility','allocated_T']))
 
     def test_multiple_ships_compete_for_shared_stock_and_all_fuels(self):
         self.write_missions([dict(ship=s,duration='1h',curiousity='.1',kindness='.2',humility='.00005') for s in ['test','better']])
@@ -123,13 +130,13 @@ class FixedFuelTests(unittest.TestCase):
         self.assertEqual(set(result['schedule'].ship),{'better'})
         self.assertEqual(result['crafts'].crafts.sum(),6)
 
-    def test_all_five_fuel_axes_are_independently_limited(self):
+    def test_four_finite_fuel_axes_are_independently_limited(self):
         self.write_missions([dict(ship='test',duration='1h',curiousity='.1',kindness='.2',
                                   resilence='.3',integrity='.4',humility='.00005')])
         stock={'curiosity':'200B','kindness':'400B','resilience':'600B','integrity':'800B','humility':'100000000'}
         result=self.run_plan(stock)
         self.assertEqual(len(result['schedule']),2)
-        for name,short in [('resilience','599999999999'),('integrity','799999999999'),('humility','99999999')]:
+        for name,short in [('resilience','599999999999'),('integrity','799999999999')]:
             with self.subTest(fuel=name):
                 result=self.run_plan({**stock,name:short})
                 self.assertEqual(len(result['schedule']),1)
@@ -153,7 +160,34 @@ class FixedFuelTests(unittest.TestCase):
         stages=result['meta']['optimization']['secondary_stages']
         stage=next(row for row in stages if row['objective']=='fuel consumption')
         self.assertIn('integer_fuel_unit_eggs',stage)
-        self.assertAlmostEqual(stage['value'],.10005)
+        self.assertAlmostEqual(stage['value'],.1)
+
+    def test_humility_only_missions_need_no_finite_fuel_or_humility_stock(self):
+        self.write_missions([dict(ship='heavy-1',duration='45m',humility='.00005')])
+        (self.base/'ship_material_expectations.csv').write_text('ship,material_id,expectation_per_launch\nheavy-1,raw,1\n')
+        finite=['curiosity=0','kindness=0','resilience=0','integrity=0']
+        for extra in [[],['humility=0'],['humility=1']]:
+            with self.subTest(extra=extra):
+                result=self.run_plan(finite+extra,max_total_launches=3)
+                self.assertEqual(len(result['schedule']),3)
+                self.assertEqual(result['crafts'].crafts.sum(),3)
+                self.assertEqual(result['meta']['fuel_inventory_totals'],dict(starting='0',consumed='0',remaining='0'))
+                self.assertIn('Unlimited',result['log'])
+                humility=next(row for row in result['meta']['fuel_inventory'] if row['fuel']=='humility')
+                self.assertEqual(humility['consumed_eggs'],'150000000')
+        for mode in ['balanced','max-crafts']:
+            result=self.run_plan([],mode=mode,max_total_launches=3,max_launches_per_hour=1,sleep=['00:00-01:00'])
+            self.assertEqual(result['crafts'].crafts.sum(),3)
+            self.assertTrue((result['schedule'].start_hour>=1-1e-7).all())
+            validate_schedule(result['schedule'].to_dict('records'),1,horizon=6,max_slots=3,max_total_launches=3)
+
+    def test_humility_cannot_contribute_to_capacity_or_fuel_objective(self):
+        costs=pd.read_csv(self.base/'mission.csv',dtype=str).set_index('ship')
+        a=FuelInventory(['curiosity=300B','kindness=600B'],costs,['test'])
+        b=FuelInventory(['curiosity=300B','kindness=600B','humility=1'],costs,['test'])
+        self.assertEqual(a.rows,b.rows);self.assertEqual(a.launch_bound(0),3)
+        self.assertNotIn('humility',a.stock);self.assertNotIn('humility',b.stock)
+        self.assertEqual(a.total_unit,Fraction(300000000000))
 
     def test_genuinely_zero_cost_missions_are_not_excluded(self):
         self.write_missions([dict(ship='test',duration='1h')])
@@ -235,7 +269,7 @@ class FixedFuelTests(unittest.TestCase):
 
     def test_cli_invalid_inventory_and_dashboard_data(self):
         run=subprocess.run([sys.executable,str(ROOT/'optimize_reggference.py'),'--fuel-mode','existing_inventory',
-                            '--initial-fuel','humility=-2T'],capture_output=True,text=True)
+                            '--initial-fuel','curiosity=-2T'],capture_output=True,text=True)
         self.assertEqual(run.returncode,2);self.assertIn('Invalid fuel quantity',run.stderr);self.assertNotIn('Traceback',run.stderr)
         result=self.run_plan(['curiosity=350B','kindness=1T','humility=1T'])
         html=(result['out']/'plan.html').read_text()
